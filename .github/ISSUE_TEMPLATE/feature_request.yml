@@ -1,0 +1,69 @@
+name: Feature Request
+description: Suggest an improvement or new capability.
+title: "[Feature]: "
+labels:
+  - enhancement
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement. Please focus on the problem and expected outcome.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem should this solve?
+      placeholder: It is difficult to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: Describe the behavior or workflow you want.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Related Component
+      multiple: true
+      options:
+        - Discord bot
+        - MCP server
+        - Webhook server
+        - Daily event reminder
+        - Member database
+        - Docker/deployment
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe any workaround or alternative approach you considered.
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Add examples, screenshots, links, or implementation notes.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to help implement this.
+          required: false
