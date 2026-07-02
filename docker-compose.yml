@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  ntuai-watson-agent:
+    build: .
+    image: ntuai-watson-agent
+    container_name: ntuai-watson-agent
+    restart: unless-stopped
+    ports:
+      - "5190:5190"
+    volumes:
+      - huggingface-cache:/root/.cache/huggingface
+      - faiss-cache:/app/cache
+      - ./data:/app/data
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_LOG_CHANNEL_ID=${DISCORD_LOG_CHANNEL_ID}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - PAGE_ACCESS_TOKEN=${PAGE_ACCESS_TOKEN}
+      - FB_VERIFY_TOKEN=${FB_VERIFY_TOKEN}
+      - LINE_CHANNEL_ACCESS_TOKEN=${LINE_CHANNEL_ACCESS_TOKEN}
+      - LINE_CHANNEL_SECRET=${LINE_CHANNEL_SECRET}
+      - LINE_ALLOWED_GROUPS=${LINE_ALLOWED_GROUPS}
+      - STAFF_NOTIFICATION_CHANNEL_ID=${STAFF_NOTIFICATION_CHANNEL_ID}
+      - COURSE_DATA_URL=${COURSE_DATA_URL}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  ngrok:
+    image: ngrok/ngrok:latest
+    restart: unless-stopped
+    ports:
+      - "4040:4040"
+    environment:
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
+    command: http ntuai-watson-agent:5190
+    depends_on:
+      - ntuai-watson-agent
+
+volumes:
+  huggingface-cache:
+  faiss-cache:
