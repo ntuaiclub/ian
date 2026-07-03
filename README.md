@@ -61,7 +61,10 @@ ntuai-watson-agent/
 ├── start.sh                # 容器啟動腳本（依序啟動各服務）
 ├── Dockerfile              # NVIDIA CUDA 12.1 + Python 3.11 映像
 ├── docker-compose.yml      # 含 GPU 支援與 ngrok tunnel
-├── requirements.txt
+├── .python-version       # uv local Python version pin
+├── pyproject.toml        # Python project metadata and dependency groups
+├── uv.lock               # Reproducible dependency lockfile
+├── requirements.txt      # Legacy compatibility export during uv migration
 ├── .env.example            # 環境變數範本
 └── data/
     ├── ntuai_zh_base.md                # Markdown 知識庫文件（RAG 資料來源）
@@ -218,26 +221,41 @@ docker-compose down            # 停止服務
 ### 本地開發
 
 ```bash
-uv venv
-uv pip install -r requirements.txt
-uv pip install -r requirements-dev.txt
-uv pip install -e .
-. .venv/bin/activate
+uv sync --dev
 
 # 啟動 MCP Server
-ian mcp --http --port 5191 &
+uv run ian mcp --http --port 5191 &
 
 # 啟動 FB/LINE Webhook
-ian webhook &
+uv run ian webhook &
 
 # 啟動 Daily Event Reminder
-ian reminder --daemon &
+uv run ian reminder --daemon &
 
 # 啟動 Discord Bot
-ian discord
+uv run ian discord
 ```
 
-`requirements.txt` 會依平台選擇 FAISS 套件：macOS 本機安裝 `faiss-cpu`，Docker/Linux x86_64 CUDA 環境安裝 `faiss-gpu-cu12`。
+專案目前固定使用 Python 3.11 系列；`.python-version` 讓本機 `uv sync` 和 Docker 使用相同 Python 版本。
+
+`pyproject.toml` 是目前的依賴權威來源，`uv.lock` 需要隨依賴變更一起提交。`requirements.txt` 暫時保留給尚未切換到 `uv` 的部署或工具；新的本地開發與 Docker 映像都使用 `uv sync`。
+
+FAISS 依賴在 `pyproject.toml` 以平台 marker 明確指定：macOS 安裝 `faiss-cpu`，Linux x86_64 / CUDA 容器安裝 `faiss-gpu-cu12`。
+
+常用開發指令：
+
+```bash
+uv run pytest
+uv run ian --help
+uv lock
+```
+
+若仍需產生舊版 requirements 檔，可從 lockfile 匯出：
+
+```bash
+uv export --no-dev --format requirements.txt -o requirements.txt
+uv export --only-dev --format requirements.txt -o requirements-dev.txt
+```
 
 ### 測試
 

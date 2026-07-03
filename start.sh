@@ -1,6 +1,6 @@
 #!/bin/sh
 
-. /app/venv/bin/activate
+. /app/.venv/bin/activate
 
 echo "Starting MCP server in HTTP mode (port 5191)..."
 ian mcp --http --port 5191 &
