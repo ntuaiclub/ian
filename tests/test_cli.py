@@ -1,0 +1,74 @@
+from typer.testing import CliRunner
+
+from ian import cli
+
+
+runner = CliRunner()
+
+
+def test_cli_lists_service_commands():
+    result = runner.invoke(cli.app, ["--help"])
+
+    assert result.exit_code == 0
+    assert "mcp" in result.output
+    assert "webhook" in result.output
+    assert "reminder" in result.output
+    assert "discord" in result.output
+
+
+def test_mcp_command_delegates_to_app(monkeypatch):
+    calls = []
+
+    def fake_main(http=False, host="0.0.0.0", port=5191):
+        calls.append({"http": http, "host": host, "port": port})
+
+    monkeypatch.setattr(cli, "_run_mcp", fake_main)
+
+    result = runner.invoke(cli.app, ["mcp", "--http", "--host", "127.0.0.1", "--port", "6000"])
+
+    assert result.exit_code == 0
+    assert calls == [{"http": True, "host": "127.0.0.1", "port": 6000}]
+
+
+def test_reminder_command_delegates_to_app(monkeypatch):
+    calls = []
+
+    def fake_main(target_date=None, dry=False, daemon=False):
+        calls.append({"target_date": target_date, "dry": dry, "daemon": daemon})
+
+    monkeypatch.setattr(cli, "_run_reminder", fake_main)
+
+    result = runner.invoke(cli.app, ["reminder", "--dry", "--date", "2026/03/07"])
+
+    assert result.exit_code == 0
+    assert calls == [{"target_date": "2026/03/07", "dry": True, "daemon": False}]
+
+
+def test_legacy_root_scripts_are_removed():
+    import pathlib
+
+    root = pathlib.Path(__file__).resolve().parents[1]
+
+    for script in [
+        "daily_event_reminder.py",
+        "discord_chatbot.py",
+        "host_agent_client.py",
+        "injection_patterns.py",
+        "mcp_server.py",
+        "member_db.py",
+        "webhook_server.py",
+    ]:
+        assert not (root / script).exists()
+
+
+def test_package_is_named_ian():
+    import importlib.util
+
+    assert importlib.util.find_spec("ian") is not None
+    assert importlib.util.find_spec("ntuai_agent") is None
+
+
+def test_apps_package_is_removed():
+    import importlib.util
+
+    assert importlib.util.find_spec("ian.apps") is None

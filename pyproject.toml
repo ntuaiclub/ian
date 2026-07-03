@@ -1,0 +1,12 @@
+[project]
+name = "ian"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+ian = "ian.cli:app"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

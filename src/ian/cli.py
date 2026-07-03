@@ -1,0 +1,66 @@
+import typer
+
+app = typer.Typer(help="NTUAI Agent service entrypoints.")
+
+
+def _run_mcp(http: bool = False, host: str = "0.0.0.0", port: int = 5191) -> None:
+    from ian.gateways.mcp_server import main
+
+    main(http=http, host=host, port=port)
+
+
+def _run_webhook() -> None:
+    from ian.gateways.webhook_server import main
+
+    main()
+
+
+def _run_reminder(target_date: str | None = None, dry: bool = False, daemon: bool = False) -> None:
+    from ian.services.reminder_runner import daemon_loop, run_once
+
+    if daemon:
+        daemon_loop()
+    else:
+        run_once(target_date=target_date, dry=dry)
+
+
+def _run_discord() -> None:
+    from ian.gateways.discord_bot import main
+
+    main()
+
+
+@app.command()
+def mcp(
+    http: bool = typer.Option(False, "--http", help="Run with Streamable HTTP transport."),
+    host: str = typer.Option("0.0.0.0", "--host", help="HTTP server host."),
+    port: int = typer.Option(5191, "--port", help="HTTP server port."),
+) -> None:
+    """Run the MCP tool server."""
+    _run_mcp(http=http, host=host, port=port)
+
+
+@app.command()
+def webhook() -> None:
+    """Run the Facebook/LINE webhook server."""
+    _run_webhook()
+
+
+@app.command()
+def reminder(
+    daemon: bool = typer.Option(False, "--daemon", help="Run as daemon, trigger daily at 19:00 UTC+8."),
+    dry: bool = typer.Option(False, "--dry", help="Dry run, no messages sent."),
+    date: str | None = typer.Option(None, "--date", help="Check specific date (YYYY/MM/DD)."),
+) -> None:
+    """Run the daily event reminder."""
+    _run_reminder(target_date=date, dry=dry, daemon=daemon)
+
+
+@app.command()
+def discord() -> None:
+    """Run the Discord bot."""
+    _run_discord()
+
+
+if __name__ == "__main__":
+    app()

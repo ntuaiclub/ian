@@ -3,7 +3,7 @@
 . /app/venv/bin/activate
 
 echo "Starting MCP server in HTTP mode (port 5191)..."
-python mcp_server.py --http --port 5191 &
+ian mcp --http --port 5191 &
 
 echo "Waiting for MCP server to initialize (this may take a while for model loading)..."
 MAX_RETRIES=90
@@ -20,10 +20,10 @@ done
 echo "MCP server is ready!"
 
 echo "Starting Flask server for FB/LINE..."
-python webhook_server.py &
+ian webhook &
 
 echo "Starting daily event reminder daemon..."
-python daily_event_reminder.py --daemon &
+ian reminder --daemon &
 
 echo "Starting Discord bot..."
-python discord_chatbot.py
+ian discord

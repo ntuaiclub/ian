@@ -10,41 +10,36 @@
 使用者 (Discord / FB / LINE)
         │
         ▼
-  ┌──────────────────┐    ┌────────────────────┐
-  │   Gateway 層     │    │   MCP Tool Server   │
-  │                  │    │  (mcp_server.py)    │
-  │ discord_         │◄──►│                     │
-  │  chatbot.py      │    │  - Hybrid RAG       │
-  │                  │    │  - 課程資料檢索     │
-  │ webhook_         │    │  - 幹部通知         │
-  │  server.py       │    │  - 社員綁定/簽到    │
-  │  (FB / LINE)     │    │  - 訂閱 / 個性備註  │
-  └────────┬─────────┘    └────────────────────┘
-           │                        ▲
-           │              ┌────────────────────┐
-           │              │   Member DB         │
-           │              │  (member_db.py)     │
-           │              │                     │
-           │              │  Google Apps Script  │
-           │              │  ⇄ Local JSON Cache │
-           │              └────────────────────┘
+  ┌──────────────────────────┐    ┌──────────────────────────┐
+  │ Gateway 層               │    │ MCP Tool Server           │
+  │ ian.gateways             │◄──►│ ian.gateways             │
+  │ - discord_bot            │    │ - mcp_server             │
+  │ - webhook_server         │    │ - Hybrid RAG             │
+  │                          │    │ - 課程 / 通知 / 綁定工具 │
+  └────────────┬─────────────┘    └──────────────────────────┘
+               │                              ▲
+               │                    ┌──────────────────────────┐
+               │                    │ Member Store             │
+               │                    │ ian.services             │
+               │                    │ Google Apps Script       │
+               │                    │ ⇄ Local JSON Cache       │
+               │                    └──────────────────────────┘
            ▼
-  ┌──────────────────┐
-  │ Host Agent Client │
-  │ (host_agent_     │
-  │  client.py)      │
-  │                  │
-  │ LangGraph ReAct  │
-  │ + Gemini 3 Flash │
-  └──────────────────┘
+  ┌──────────────────────────┐
+  │ Agent Runtime            │
+  │ ian.services             │
+  │ - agent_runtime          │
+  │ - LangGraph ReAct        │
+  │ - Gemini 3 Flash         │
+  └──────────────────────────┘
 ```
 
 ### 各層職責
 
-- **Gateway 層**：各平台入口。`discord_chatbot.py` 處理 Discord Slash Commands；`webhook_server.py` (Flask) 處理 Facebook Messenger 與 LINE Webhook。
-- **Host Agent Client**：`host_agent_client.py` 使用 LangGraph `create_react_agent` 搭配 Google Gemini 3 Flash，透過 MCP 協定調用工具，並管理每位使用者的獨立對話 session。
-- **MCP Tool Server**：`mcp_server.py` 以 FastMCP 框架透過 SSE 提供 RAG 搜尋、課程查詢、幹部通知、社員綁定、簽到碼產生、訂閱管理、個性備註等工具。
-- **Member DB**：`member_db.py` 從 Google Apps Script API 同步社員資料至本地 JSON 快取，提供平台帳號查詢、角色辨識、Email 綁定、訂閱管理與個性備註功能。
+- **Gateway 層**：各平台入口。`ian.gateways.discord_bot` 處理 Discord Slash Commands；`ian.gateways.webhook_server` (Flask) 處理 Facebook Messenger 與 LINE Webhook。
+- **Host Agent Client**：`ian.services.agent_runtime` 使用 LangGraph `create_react_agent` 搭配 Google Gemini 3 Flash，透過 MCP 協定調用工具，並管理每位使用者的獨立對話 session。
+- **MCP Tool Server**：`ian.gateways.mcp_server` 以 FastMCP 框架透過 SSE 提供 RAG 搜尋、課程查詢、幹部通知、社員綁定、簽到碼產生、訂閱管理、個性備註等工具。
+- **Member DB**：`ian.services.member_store` 從 Google Apps Script API 同步社員資料至本地 JSON 快取，提供平台帳號查詢、角色辨識、Email 綁定、訂閱管理與個性備註功能。
 
 ---
 
@@ -52,13 +47,17 @@
 
 ```
 ntuai-watson-agent/
-├── host_agent_client.py    # Agent 核心（session 管理、用量追蹤、URL 驗證、Prompt Injection 偵測）
-├── mcp_server.py           # MCP 工具伺服器（RAG、課程查詢、通知、社員綁定、簽到碼、訂閱、個性備註）
-├── member_db.py            # 社員資料庫（API 同步、平台帳號查詢、Email 綁定、訂閱、個性備註）
-├── daily_event_reminder.py # 每日活動提醒（每天 19:00 UTC+8 自動 DM 通知社員隔天活動）
-├── injection_patterns.py   # Prompt Injection 偵測模式與邏輯
-├── discord_chatbot.py      # Discord Bot（/ask、/faq、/clear）
-├── webhook_server.py       # FB / LINE Flask Webhook Server
+├── src/
+│   └── ian/
+│       ├── config.py       # 共用環境變數、路徑與時區設定
+│       ├── domain/         # 無 I/O 的純邏輯：injection、URL、member、course、reminder
+│       ├── services/       # 有狀態或 I/O 的服務邊界
+│       ├── gateways/       # Discord、Webhook、MCP 平台 adapter
+│       └── cli.py          # Typer CLI：`ian ...`
+├── tests/
+│   ├── domain/             # 純邏輯 pytest 覆蓋
+│   ├── services/           # service 邊界 pytest 覆蓋
+│   └── agent/              # Agent/MCP/LLM 整合測試 placeholder（目前 intentionally skipped）
 ├── start.sh                # 容器啟動腳本（依序啟動各服務）
 ├── Dockerfile              # NVIDIA CUDA 12.1 + Python 3.11 映像
 ├── docker-compose.yml      # 含 GPU 支援與 ngrok tunnel
@@ -75,7 +74,7 @@ ntuai-watson-agent/
 
 ## 核心元件
 
-### Host Agent Client (`host_agent_client.py`)
+### Host Agent Client (`ian.services.agent_runtime`)
 
 - 使用 **LangGraph** `create_react_agent` 搭配 **Google Gemini 3 Flash** (`gemini-3-flash-preview`) 建立 ReAct 推理迴圈。
 - 每位使用者擁有獨立 session（含 `MemorySaver` 對話記憶），閒置 15 分鐘自動過期。
@@ -87,7 +86,7 @@ ntuai-watson-agent/
 - 支援 `[NO_RESPONSE]` 機制，Agent 可選擇不回應（搭配可選 emoji reaction）。
 - 啟動時自動發送系統通知至 Discord Log Channel。
 
-### MCP Tool Server (`mcp_server.py`)
+### MCP Tool Server (`ian.gateways.mcp_server`)
 
 基於 **FastMCP** 框架，透過 streamable-http 傳輸提供以下工具：
 
@@ -117,7 +116,7 @@ ntuai-watson-agent/
 - 未指定活動時，自動列出即將舉辦的 3 場活動供選擇。
 - 透過 Discord DM 發送。
 
-### Daily Event Reminder (`daily_event_reminder.py`)
+### Daily Event Reminder (`ian.services.reminder_runner`)
 
 - 每日 **19:00 UTC+8** 自動檢查隔天是否有活動，若有則 DM 通知所有已綁定帳號的有效社員。
 - 通知內容包含完整活動資訊（課程大綱、講者、是否直播/錄影、講義連結、課程對象等），自動處理空值。
@@ -126,7 +125,7 @@ ntuai-watson-agent/
 - 支援 `--daemon` 模式（容器內常駐）、`--dry` 模擬執行、`--date` 指定日期檢查。
 - 發送結果記錄至 Discord Log Channel。
 
-### Member DB (`member_db.py`)
+### Member DB (`ian.services.member_store`)
 
 - 從 **Google Apps Script API** 同步社員資料至本地 JSON 快取。
 - 支援依平台帳號 ID（Discord / FB）查詢社員身分與角色。
@@ -136,14 +135,14 @@ ntuai-watson-agent/
 - **個性備註**：記錄使用者溝通風格與偏好（最多 100 字），供 Agent 調整回應方式。
 - 背景定時同步（每日 UTC+8 午夜），確保資料與 Google Sheets 一致。
 
-### Prompt Injection 偵測 (`injection_patterns.py`)
+### Prompt Injection 偵測 (`ian.domain.injection`)
 
 - 獨立的 Prompt Injection / Jailbreak 偵測模組。
 - **強偵測模式**：角色覆寫、指令覆蓋、結構注入等單一命中即攔截。
 - **弱偵測模式**：多重弱信號（如可疑關鍵字組合）累積觸發（3 個以上）。
 - **零寬字元過濾**：自動移除 U+200B、U+200C、U+200D、U+FEFF 等繞過字元。
 
-### Discord Bot (`discord_chatbot.py`)
+### Discord Bot (`ian.gateways.discord_bot`)
 
 | Slash Command | 說明 |
 |---------------|------|
@@ -154,7 +153,7 @@ ntuai-watson-agent/
 - 自動提取 Discord 成員角色（排除 @everyone），並整合 member_db 角色資訊。
 - 支援 `[NO_RESPONSE]` 靜默回應或 emoji-only 回應。
 
-### FB / LINE Webhook (`webhook_server.py`)
+### FB / LINE Webhook (`ian.gateways.webhook_server`)
 
 Flask Web Server，接收各平台 webhook 並在背景執行緒處理訊息。
 
@@ -219,20 +218,34 @@ docker-compose down            # 停止服務
 ### 本地開發
 
 ```bash
-pip install -r requirements.txt
+uv venv
+uv pip install -r requirements.txt
+uv pip install -r requirements-dev.txt
+uv pip install -e .
+. .venv/bin/activate
 
 # 啟動 MCP Server
-python mcp_server.py --http --port 5191 &
+ian mcp --http --port 5191 &
 
 # 啟動 FB/LINE Webhook
-python webhook_server.py &
+ian webhook &
 
 # 啟動 Daily Event Reminder
-python daily_event_reminder.py --daemon &
+ian reminder --daemon &
 
 # 啟動 Discord Bot
-python discord_chatbot.py
+ian discord
 ```
+
+`requirements.txt` 會依平台選擇 FAISS 套件：macOS 本機安裝 `faiss-cpu`，Docker/Linux x86_64 CUDA 環境安裝 `faiss-gpu-cu12`。
+
+### 測試
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+目前可執行測試集中在 `tests/domain/`、`tests/services/` 與 CLI smoke tests；Agent、MCP、LLM、Discord、LINE、Google Sheets 等整合測試以 skipped placeholder 保留，等待後續 issue 補齊。
 
 ---
 

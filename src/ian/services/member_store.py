@@ -1,12 +1,21 @@
 import json
-import os
 import sys
 import threading
 import time
 import requests
-from datetime import datetime, timezone, timedelta
-from pathlib import Path
+from datetime import datetime, timedelta
 from typing import Optional
+
+from ian.config import MEMBER_API_KEY, MEMBER_API_URL, MEMBER_DB_FILE, TZ_TPE
+from ian.domain.members import (
+    PERSONAL_PROMPT_MAX_LEN,
+    PLATFORM_FIELD_MAP,
+    SUBSCRIBE_PLATFORM_FIELD as _SUBSCRIBE_PLATFORM_FIELD,
+    VALID_SUBSCRIBE_PLATFORMS,
+    get_role_from_tier,
+    is_valid_member,
+    normalize_email,
+)
 
 def eprint(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
@@ -14,32 +23,9 @@ def eprint(*args, **kwargs):
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-MEMBER_API_URL = (
-    os.environ.get("MEMBER_API_URL", "")
-)
-MEMBER_API_KEY = os.environ.get("MEMBER_API_KEY", "")
-MEMBER_DB_FILE = Path(
-    os.path.dirname(os.path.abspath(__file__)), "data", "member_db.json"
-)
-TZ_TPE = timezone(timedelta(hours=8))
-
 # In-memory member data (list of dicts)
 _member_data: list[dict] = []
 _member_lock = threading.Lock()
-
-# Tier -> 角色 mapping
-TIER_ROLE_MAP = {
-    "STAFF": "幹部",
-    "VIP": "VIP 社員",
-}
-
-# Platform -> API field mapping
-PLATFORM_FIELD_MAP = {
-    "Discord": "discord_acc_id",
-    "FB": "fb_acc_id",
-    "LINE": "line_acc_id",
-}
-
 
 # ---------------------------------------------------------------------------
 # Sync from API
@@ -109,26 +95,6 @@ def load_member_db() -> bool:
 # ---------------------------------------------------------------------------
 # Lookup
 # ---------------------------------------------------------------------------
-def _is_valid_member(member: dict) -> bool:
-    """Check if member's valid_date has not expired (in Taiwan time)."""
-    valid_date_str = member.get("valid_date", "")
-    if not valid_date_str:
-        return False
-    try:
-        valid_date = datetime.fromisoformat(valid_date_str.replace("Z", "+00:00"))
-        now = datetime.now(TZ_TPE)
-        return now <= valid_date
-    except (ValueError, TypeError):
-        return False
-
-
-def _get_role_from_tier(tier: str) -> str:
-    """Map API Tier to Chinese role string."""
-    if not tier:
-        return "社員"
-    return TIER_ROLE_MAP.get(tier, tier)
-
-
 def lookup_member_by_platform(platform: str, account_id: str) -> Optional[dict]:
     """Find a member by their platform account ID.
 
@@ -173,29 +139,20 @@ def get_member_role(platform: str, account_id: str) -> str:
         member = lookup_member_by_platform(platform, account_id)
     if not member:
         return "非社員"
-    if not _is_valid_member(member):
+    if not is_valid_member(member):
         return "非社員（已過期）"
-    return _get_role_from_tier(member.get("Tier", ""))
+    return get_role_from_tier(member.get("Tier", ""))
 
 
 # ---------------------------------------------------------------------------
 # Email binding
 # ---------------------------------------------------------------------------
-def _normalize_email(email: str) -> str:
-    """Normalize email: lowercase the local part (before @)."""
-    email = email.strip()
-    if "@" not in email:
-        return email.lower()
-    local, domain = email.rsplit("@", 1)
-    return f"{local.lower()}@{domain}"
-
-
 def find_member_by_email(email: str) -> Optional[dict]:
     """Find a member by email (case-insensitive on local part)."""
-    normalized = _normalize_email(email)
+    normalized = normalize_email(email)
     with _member_lock:
         for member in _member_data:
-            stored_email = _normalize_email(member.get("email", ""))
+            stored_email = normalize_email(member.get("email", ""))
             if stored_email and stored_email == normalized:
                 return member
     return None
@@ -234,7 +191,7 @@ def bind_email(email: str, platform: str, account_id: str) -> dict:
     existing = str(member.get(field, "")).strip()
     if existing == account_id.strip():
         name = member.get("id", "")
-        role = _get_role_from_tier(member.get("Tier", ""))
+        role = get_role_from_tier(member.get("Tier", ""))
         return {
             "success": True,
             "message": f"您的帳號已經綁定為{role}「{name}」，無需重複綁定。",
@@ -264,10 +221,10 @@ def bind_email(email: str, platform: str, account_id: str) -> dict:
                 }
 
     # Check if valid
-    if not _is_valid_member(member):
+    if not is_valid_member(member):
         return {
             "success": False,
-            "message": f"此 Email 對應的{_get_role_from_tier(member.get('Tier', ''))}資格已過期，無法綁定。",
+            "message": f"此 Email 對應的{get_role_from_tier(member.get('Tier', ''))}資格已過期，無法綁定。",
         }
 
     # 2. POST to API
@@ -297,7 +254,7 @@ def bind_email(email: str, platform: str, account_id: str) -> dict:
     # 3. Update local cache
     with _member_lock:
         for m in _member_data:
-            if _normalize_email(m.get("email", "")) == _normalize_email(email):
+            if normalize_email(m.get("email", "")) == normalize_email(email):
                 m[field] = account_id
                 break
 
@@ -311,12 +268,12 @@ def bind_email(email: str, platform: str, account_id: str) -> dict:
         eprint(f"[MemberDB] Failed to save local DB after binding: {e}")
 
     name = member.get("id", "")
-    role = _get_role_from_tier(member.get("Tier", ""))
+    role = get_role_from_tier(member.get("Tier", ""))
 
     # Build bound platforms summary (use updated member dict)
     with _member_lock:
         updated = next(
-            (m for m in _member_data if _normalize_email(m.get("email", "")) == _normalize_email(email)),
+            (m for m in _member_data if normalize_email(m.get("email", "")) == normalize_email(email)),
             member,
         )
     bound_platforms = [p for p, f in PLATFORM_FIELD_MAP.items() if str(updated.get(f, "")).strip()]
@@ -359,7 +316,7 @@ def _update_member_field(email: str, field: str, value: str) -> dict:
     # Update local cache
     with _member_lock:
         for m in _member_data:
-            if _normalize_email(m.get("email", "")) == _normalize_email(email):
+            if normalize_email(m.get("email", "")) == normalize_email(email):
                 m[field] = value
                 break
 
@@ -377,14 +334,6 @@ def _update_member_field(email: str, field: str, value: str) -> dict:
 # ---------------------------------------------------------------------------
 # Subscribe management
 # ---------------------------------------------------------------------------
-VALID_SUBSCRIBE_PLATFORMS = {"discord"}
-
-# Platform -> account ID field mapping for subscribe validation
-_SUBSCRIBE_PLATFORM_FIELD = {
-    "discord": "discord_acc_id",
-}
-
-
 def update_subscribe(platform: str, account_id: str, subscribe_str: str) -> dict:
     """Update a member's notification subscription platforms.
 
@@ -403,7 +352,7 @@ def update_subscribe(platform: str, account_id: str, subscribe_str: str) -> dict
     if not member:
         return {"success": False, "message": "找不到您的社員資料，請先透過 Email 綁定身分。"}
 
-    if not _is_valid_member(member):
+    if not is_valid_member(member):
         return {"success": False, "message": "您的社員資格已過期，無法設定訂閱。"}
 
     # Parse and validate platforms
@@ -449,9 +398,6 @@ def update_subscribe(platform: str, account_id: str, subscribe_str: str) -> dict
 # ---------------------------------------------------------------------------
 # Personal prompt management
 # ---------------------------------------------------------------------------
-PERSONAL_PROMPT_MAX_LEN = 100
-
-
 def update_personal_prompt(platform: str, account_id: str, prompt_text: str) -> dict:
     """Update a member's personal prompt (personality/preference memo).
 
