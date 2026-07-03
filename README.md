@@ -221,7 +221,14 @@ docker-compose down            # 停止服務
 ### 本地開發
 
 ```bash
+# 建立專案環境
 uv sync --dev
+
+# 執行測試
+uv run pytest
+
+# 查看現有指令
+uv run ian --help
 
 # 啟動 MCP Server
 uv run ian mcp --http --port 5191 &
@@ -236,34 +243,7 @@ uv run ian reminder --daemon &
 uv run ian discord
 ```
 
-專案目前固定使用 Python 3.11 系列；`.python-version` 讓本機 `uv sync` 和 Docker 使用相同 Python 版本。
-
-`pyproject.toml` 是目前的依賴權威來源，`uv.lock` 需要隨依賴變更一起提交。`requirements.txt` 暫時保留給尚未切換到 `uv` 的部署或工具；新的本地開發與 Docker 映像都使用 `uv sync`。
-
 FAISS 依賴在 `pyproject.toml` 以平台 marker 明確指定：macOS 安裝 `faiss-cpu`，Linux x86_64 / CUDA 容器安裝 `faiss-gpu-cu12`。
-
-常用開發指令：
-
-```bash
-uv run pytest
-uv run ian --help
-uv lock
-```
-
-若仍需產生舊版 requirements 檔，可從 lockfile 匯出：
-
-```bash
-uv export --no-dev --format requirements.txt -o requirements.txt
-uv export --only-dev --format requirements.txt -o requirements-dev.txt
-```
-
-### 測試
-
-```bash
-.venv/bin/python -m pytest -q
-```
-
-目前可執行測試集中在 `tests/domain/`、`tests/services/` 與 CLI smoke tests；Agent、MCP、LLM、Discord、LINE、Google Sheets 等整合測試以 skipped placeholder 保留，等待後續 issue 補齊。
 
 ---
 
