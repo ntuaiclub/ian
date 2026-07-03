@@ -61,10 +61,10 @@ ntuai-watson-agent/
 ├── start.sh                # 容器啟動腳本（依序啟動各服務）
 ├── Dockerfile              # NVIDIA CUDA 12.1 + Python 3.11 映像
 ├── docker-compose.yml      # 含 GPU 支援與 ngrok tunnel
-├── .python-version       # uv local Python version pin
-├── pyproject.toml        # Python project metadata and dependency groups
-├── uv.lock               # Reproducible dependency lockfile
-├── requirements.txt      # Legacy compatibility export during uv migration
+├── .python-version       # uv 本機 Python 版本固定檔
+├── pyproject.toml        # Python 專案 metadata 與依賴群組
+├── uv.lock               # 可重現安裝的依賴 lockfile
+├── requirements.txt      # uv 遷移期間保留的舊版相容匯出檔
 ├── .env.example            # 環境變數範本
 └── data/
     ├── ntuai_zh_base.md                # Markdown 知識庫文件（RAG 資料來源）
