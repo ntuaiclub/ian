@@ -4,7 +4,7 @@
 
 ## 先讀這些
 
-- [`README.md`](README.md)：系統架構與核心元件說明。
+- [`ARCHITECTURE.md`](ARCHITECTURE.md)：系統架構與核心元件說明。
 - [`Makefile`](Makefile)：常用開發、測試、pre-commit、Docker 指令。
 - [`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE/)：bug / feature issue 格式。
 - [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md)：PR 必填內容與影響檢查。
