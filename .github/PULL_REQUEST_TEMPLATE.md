@@ -1,5 +1,6 @@
 ## Summary
 
+<!-- PR title should use a prefix like [Bug]:, [Feature]:, [Docs]:, [Refactor]:, [Test]:, or [Chore]:. -->
 <!-- Describe the change in 1-2 sentences. -->
 
 ## Related Issue
