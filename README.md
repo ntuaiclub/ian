@@ -61,6 +61,7 @@ ntuai-watson-agent/
 ├── start.sh                # 容器啟動腳本（依序啟動各服務）
 ├── Dockerfile              # NVIDIA CUDA 12.1 + Python 3.11 映像
 ├── docker-compose.yml      # 含 GPU 支援與 ngrok tunnel
+├── Makefile              # 常用本機開發與 Docker 指令捷徑
 ├── .python-version       # uv 本機 Python 版本固定檔
 ├── .pre-commit-config.yaml # pre-commit 本機檢查設定
 ├── pyproject.toml        # Python 專案 metadata 與依賴群組
@@ -244,6 +245,21 @@ uv run ian discord
 ```
 
 FAISS 依賴在 `pyproject.toml` 以平台 marker 明確指定：macOS 安裝 `faiss-cpu`，Linux x86_64 / CUDA 容器安裝 `faiss-gpu-cu12`。
+
+常用工作流程也可透過 Makefile 執行：
+
+```bash
+make help
+make setup
+make sync
+make test
+make precommit
+make docker-build
+make docker-up
+make docker-logs
+make docker-down
+make clean
+```
 
 ### Pre-commit
 
