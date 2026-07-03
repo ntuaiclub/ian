@@ -145,6 +145,15 @@ make precommit
 
 若改到 Docker、啟動流程或平台整合，請依 `Makefile` 與本文件額外驗證對應服務。若未能執行某些檢查，請在 PR 的 Testing 區塊說明原因與風險。
 
+## CI
+
+GitHub Actions 會在 pull request 與 `main` branch push 時執行：
+
+- `uv run pre-commit run --all-files`
+- `uv run pytest`
+
+CI 不依賴 production secrets、GPU、Discord/LINE/Facebook credentials、Google APIs 或 live LLM calls。需要外部服務的測試應以 mock、fixture 或 skipped integration placeholder 處理。
+
 ## 協作準則
 
 - 先讀相關檔案與測試，再修改。
