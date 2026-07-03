@@ -54,4 +54,3 @@ def normalize_email(email: str) -> str:
 def parse_subscribe_platforms(subscribe_str: str) -> list[str]:
     raw_platforms = [p.strip().lower() for p in subscribe_str.split(",") if p.strip()]
     return sorted(set(raw_platforms))
-

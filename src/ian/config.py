@@ -28,4 +28,3 @@ LINE_ALLOWED_GROUPS = [
     g.strip() for g in os.environ.get("LINE_ALLOWED_GROUPS", "").split(",") if g.strip()
 ]
 ALLOWED_CHANNELS = ALLOWED_DISCORD_CHANNELS + LINE_ALLOWED_GROUPS
-

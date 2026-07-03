@@ -62,9 +62,9 @@ ntuai-watson-agent/
 ├── Dockerfile              # NVIDIA CUDA 12.1 + Python 3.11 映像
 ├── docker-compose.yml      # 含 GPU 支援與 ngrok tunnel
 ├── .python-version       # uv 本機 Python 版本固定檔
+├── .pre-commit-config.yaml # pre-commit 本機檢查設定
 ├── pyproject.toml        # Python 專案 metadata 與依賴群組
 ├── uv.lock               # 可重現安裝的依賴 lockfile
-├── requirements.txt      # uv 遷移期間保留的舊版相容匯出檔
 ├── .env.example            # 環境變數範本
 └── data/
     ├── ntuai_zh_base.md                # Markdown 知識庫文件（RAG 資料來源）
@@ -244,6 +244,18 @@ uv run ian discord
 ```
 
 FAISS 依賴在 `pyproject.toml` 以平台 marker 明確指定：macOS 安裝 `faiss-cpu`，Linux x86_64 / CUDA 容器安裝 `faiss-gpu-cu12`。
+
+### Pre-commit
+
+本專案使用 pre-commit 執行輕量的格式、lint 與 repository hygiene 檢查
+
+```bash
+# 安裝 git hooks
+uv run pre-commit install
+
+# 手動檢查所有檔案
+uv run pre-commit run --all-files
+```
 
 ---
 

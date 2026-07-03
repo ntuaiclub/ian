@@ -106,4 +106,3 @@ def format_course_data(df: pd.DataFrame, has_permission: bool) -> str:
             formatted_content.append(course_content)
 
     return "\n\n".join(formatted_content)
-

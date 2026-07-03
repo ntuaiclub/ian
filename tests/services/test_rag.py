@@ -7,4 +7,3 @@ def test_simple_bm25_scores_matching_document_higher():
     scores = bm25.get_scores(["ai"])
 
     assert scores[0] > scores[1]
-

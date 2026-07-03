@@ -212,13 +212,13 @@ async def search_qa_chunks_by_semantics(query: str, top_k: int = 5) -> str:
 async def notify_staff(message: str, user_name: str = "", platform: Optional[str] = "", context: str = "") -> str:
     """
     當 agent 認為需要通知幹部時，使用此工具發送通知訊息到幹部 Discord 頻道。
-    
+
     適用情況：
     - 使用者詢問合作或商業相關事宜
     - 使用者有投訴或反映問題
     - 使用者詢問的問題超出 AI 能力範圍，需要人工處理
     - 任何需要幹部關注或處理的情況
-    
+
     Args:
         message: 要通知幹部的訊息內容（應包含摘要和重要資訊）
         user_name: 發起詢問的使用者名稱（選填）
@@ -230,22 +230,22 @@ async def notify_staff(message: str, user_name: str = "", platform: Optional[str
         from datetime import datetime, timezone, timedelta
         tz_taipei = timezone(timedelta(hours=8))
         timestamp = datetime.now(tz_taipei).strftime("%Y-%m-%d %H:%M:%S")
-        
+
         notification = f"📢 **幹部通知** `{timestamp}`\n"
-        
+
         if user_name:
             notification += f"👤 使用者：`{user_name}`"
             if platform:
                 notification += f" ({platform})"
             notification += "\n"
-        
+
         notification += f"📝 **通知內容**：\n{message}\n"
-        
+
         if context:
             # 限制 context 長度
             context_preview = context[:500] + "..." if len(context) > 500 else context
             notification += f"\n💬 **相關上下文**：\n{context_preview}"
-        
+
         success = await asyncio.to_thread(
             notifications.send_discord_channel_message,
             notifications.STAFF_NOTIFICATION_CHANNEL_ID,
@@ -256,7 +256,7 @@ async def notify_staff(message: str, user_name: str = "", platform: Optional[str
             return "✅ 已成功通知幹部，他們會盡快處理您的需求。"
         else:
             return "⚠️ 通知發送失敗，請稍後再試或透過其他管道聯繫幹部。"
-            
+
     except Exception as e:
         eprint(f"[notify_staff] 工具執行錯誤: {e}")
         return f"⚠️ 通知發送時發生錯誤：{str(e)}"

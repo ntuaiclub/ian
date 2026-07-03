@@ -36,7 +36,10 @@ ian = "ian.cli:app"
 
 [dependency-groups]
 dev = [
+    "pre-commit",
+    "pre-commit-hooks",
     "pytest",
+    "ruff",
 ]
 
 [build-system]
