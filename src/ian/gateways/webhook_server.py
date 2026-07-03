@@ -1,27 +1,34 @@
-from flask import Flask, request, abort
-import requests
+import asyncio
 import json
 import os
 import sys
-import re
-import time
-import asyncio
 import threading
-from datetime import datetime, timezone, timedelta
+import time
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
-from host_agent_client import *
-from member_db import get_member_role as get_member_role_from_db, get_member_name as get_member_name_from_db, init as init_member_db
+import requests
+from flask import Flask, abort, request
+from linebot import LineBotApi, WebhookHandler
+from linebot.exceptions import InvalidSignatureError
+from linebot.models import MessageEvent, TextMessage, TextSendMessage
+
+from ian.services.agent_runtime import (
+    add_log,
+    chat_with_agent,
+    parse_no_response,
+    start_dispatcher,
+)
+from ian.services.member_store import (
+    get_member_name as get_member_name_from_db,
+    get_member_role as get_member_role_from_db,
+    init as init_member_db,
+)
 
 
 def eprint(*args, **kwargs):
     """Print to stderr."""
     print(*args, file=sys.stderr, **kwargs)
-
-# LINE Bot SDK
-from linebot import LineBotApi, WebhookHandler
-from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
 app = Flask(__name__)
 
@@ -255,7 +262,8 @@ def handle_facebook_messages(data):
             
             if message_obj and message_obj.get('text') and not message_obj.get('is_echo'):
                 mid = message_obj.get('mid')
-                if not mid: continue
+                if not mid:
+                    continue
 
                 with PROCESSED_MESSAGES_LOCK:
                     if mid in PROCESSED_MESSAGES:
@@ -317,8 +325,6 @@ def handle_line_message(event):
         )
         return
     
-    current_time = get_current_time()
-    
     eprint(f"LINE: [{source_type}:{chat_id}] 收到 {user_id} 的訊息: {actual_question}")
     
     # 顯示 LINE 載入動畫
@@ -366,11 +372,11 @@ async def process_line_message_task(reply_token, user_id, user_message, chat_id,
         
         is_no_response, _ = parse_no_response(bot_response)
         if is_no_response:
-            eprint(f"LINE: Agent 決定不回覆此訊息")
+            eprint("LINE: Agent 決定不回覆此訊息")
             return
         
         if "已達今日使用上限" in bot_response:
-            eprint(f"LINE: 使用者已達上限，不回覆")
+            eprint("LINE: 使用者已達上限，不回覆")
             return
         
         # 處理長訊息分段
@@ -430,7 +436,11 @@ def status():
         "platforms": ["Facebook", "LINE"]
     }, 200
 
-# ====== Main ======
-if __name__ == '__main__':
+def main():
     print("啟動 Flask 伺服器...")
     app.run(host='0.0.0.0', port=5190, debug=False)
+
+
+# ====== Main ======
+if __name__ == '__main__':
+    main()

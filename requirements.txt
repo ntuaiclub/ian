@@ -9,6 +9,7 @@ discord
 line-bot-sdk
 
 # Core Logic & AI
+typer
 mcp[cli]
 langchain
 langgraph
@@ -21,7 +22,8 @@ langchain-text-splitters
 langchain-mcp-adapters
 pydantic
 sentence-transformers
-faiss-gpu-cu12
+faiss-gpu-cu12; sys_platform == "linux" and platform_machine == "x86_64"
+faiss-cpu; sys_platform == "darwin"
 
 # Data & Text Processing
 pandas

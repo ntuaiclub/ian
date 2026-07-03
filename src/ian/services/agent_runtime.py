@@ -2,20 +2,31 @@
 Agent SYS_PROMPT 在下方約三百行處
 """
 
-from langchain_mcp_adapters.client import MultiServerMCPClient
-from langgraph.prebuilt import create_react_agent
-from langchain_core.callbacks import BaseCallbackHandler
-from langgraph.checkpoint.memory import MemorySaver
-from langchain_google_genai import ChatGoogleGenerativeAI
+import asyncio
+import os
+import sys
+import threading
+import time
+import traceback
 from concurrent.futures import Future
+from datetime import datetime, timedelta, timezone
 from queue import Queue
-from datetime import datetime, timezone, timedelta
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
-import os, threading, asyncio, re, time, sys, requests, traceback
+import requests
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_mcp_adapters.client import MultiServerMCPClient
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.prebuilt import create_react_agent
 
-from injection_patterns import detect_prompt_injection, INJECTION_REJECTION_MSG
-from member_db import lookup_member_by_platform
+from ian.domain.injection import INJECTION_REJECTION_MSG, detect_prompt_injection
+from ian.domain.urls import (
+    URL_PATTERN,
+    parse_no_response as _parse_no_response,
+    validate_urls_in_response as _validate_urls_in_response,
+)
+from ian.services.member_store import lookup_member_by_platform
 
 
 def _unwrap_exception(exc: BaseException) -> BaseException:
@@ -39,12 +50,7 @@ def parse_no_response(text: str) -> tuple[bool, str | None]:
         "[NO_RESPONSE:🔥]"   -> (True, "🔥")
         "Hello!"             -> (False, None)
     """
-    if "NO_RESPONSE" not in text:
-        return False, None
-    m = re.search(r"\[NO_RESPONSE(?::(.+?))?\]", text)
-    if m:
-        return True, m.group(1) or None
-    return True, None
+    return _parse_no_response(text)
 
 
 usage_tracker = {}
@@ -416,7 +422,7 @@ SYS_PROMPT = """
 這樣可以避免不必要的回覆，打擾使用者或群組中正常的聊天。
 """
 
-_URL_PATTERN = re.compile(r'https?://[^\s\)）\]」\'>,，、。]+')
+_URL_PATTERN = URL_PATTERN
 
 def _extract_urls(text: str) -> set[str]:
     return set(_URL_PATTERN.findall(text))
@@ -426,21 +432,7 @@ _PROMPT_URLS = _extract_urls(SYS_PROMPT)
 
 def validate_urls_in_response(response: str, tool_results: list[str]) -> str:
     """檢查回覆中的 URL 是否來自合法來源"""
-    allowed_urls = set(_PROMPT_URLS)
-    for result in tool_results:
-        allowed_urls.update(_extract_urls(result))
-
-    response_urls = _URL_PATTERN.findall(response)
-    for url in response_urls:
-        url_norm = url.rstrip('/')
-        if not any(
-            url_norm.startswith(allowed.rstrip('/')) or
-            allowed.rstrip('/').startswith(url_norm)
-            for allowed in allowed_urls
-        ):
-            response = response.replace(url, "(連結讀取錯誤，請重新索取)")
-
-    return response
+    return _validate_urls_in_response(response, tool_results, prompt_text=SYS_PROMPT)
 
 
 """

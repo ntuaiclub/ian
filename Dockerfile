@@ -27,6 +27,7 @@ RUN echo "--- Installed Packages List ---" && \
     echo "--- End of List ---"
 
 COPY . .
+RUN python -m pip install --no-cache-dir --no-deps -e .
 
 RUN chmod +x start.sh
 

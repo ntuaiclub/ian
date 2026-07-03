@@ -4,8 +4,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timedelta, timezone
-import asyncio
-from host_agent_client import (
+from ian.services.agent_runtime import (
     start_dispatcher,
     start_log_processor,
     send_startup_notification,
@@ -13,7 +12,7 @@ from host_agent_client import (
     clear_session,
     parse_no_response,
 )
-from member_db import get_member_role as get_member_role_from_db, init as init_member_db
+from ian.services.member_store import get_member_role as get_member_role_from_db, init as init_member_db
 
 UPLOAD_DIR = "uploads"
 CHAT_HISTORY_FILE = os.path.join(UPLOAD_DIR, "chat_history.jsonl")
@@ -77,14 +76,14 @@ class FAQView(discord.ui.View):
             )
             is_no_response, reaction_emoji = parse_no_response(response)
             if is_no_response:
-                print(f"Discord: Agent 決定不回覆此訊息")
+                print("Discord: Agent 決定不回覆此訊息")
                 if reaction_emoji:
                     await interaction.followup.send(reaction_emoji)
                 return
             await interaction.followup.send(response)
             
         except Exception as e:
-            await interaction.followup.send(f"⚠️ Error.")
+            await interaction.followup.send("⚠️ Error.")
             print(f"Error processing FAQ button: {e}")
 
     @discord.ui.button(
@@ -164,7 +163,7 @@ async def ask(interaction: discord.Interaction, prompt: str):
         )
         is_no_response, reaction_emoji = parse_no_response(bot_response)
         if is_no_response:
-            print(f"Discord: Agent 決定不回覆此訊息")
+            print("Discord: Agent 決定不回覆此訊息")
             if reaction_emoji:
                 await interaction.followup.send(reaction_emoji)
             return
@@ -188,12 +187,16 @@ async def clear(interaction: discord.Interaction):
         await clear_session(interaction.user.name)
         await interaction.response.send_message("🫥 已清除記憶，請開始新的對話。\nCleared. Please start a new conversation.")
     except Exception as e:
-        await interaction.response.send_message(f"⚠️ Error.")
+        await interaction.response.send_message("⚠️ Error.")
         print(f"Error clearing session: {e}")
 
-if __name__ == "__main__":
+def main():
     bot_token = os.environ.get("DISCORD_BOT_TOKEN", "")
     if not bot_token:
         print("Error: DISCORD_BOT_TOKEN not found in environment variables.")
-        exit(1)
+        raise SystemExit(1)
     bot.run(bot_token)
+
+
+if __name__ == "__main__":
+    main()
