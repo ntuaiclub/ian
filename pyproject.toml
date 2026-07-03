@@ -1,11 +1,50 @@
 [project]
 name = "ian"
 version = "0.0.0"
-requires-python = ">=3.11"
-dependencies = []
+description = "Multi-platform AI assistant for NTU AI Club."
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "flask[async]",
+    "requests",
+    "discord",
+    "line-bot-sdk",
+    "typer",
+    "mcp[cli]",
+    "langchain",
+    "langgraph",
+    "langchain-core",
+    "langchain-google-genai",
+    "langchain-google-community",
+    "langchain-huggingface",
+    "langchain-community",
+    "langchain-text-splitters",
+    "langchain-mcp-adapters",
+    "pydantic",
+    "sentence-transformers",
+    "faiss-gpu-cu12; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "faiss-cpu; sys_platform == 'darwin'",
+    "pandas",
+    "jieba",
+    "uvicorn",
+    "starlette",
+    "sse-starlette",
+]
 
 [project.scripts]
 ian = "ian.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

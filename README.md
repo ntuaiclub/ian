@@ -61,7 +61,10 @@ ntuai-watson-agent/
 ├── start.sh                # 容器啟動腳本（依序啟動各服務）
 ├── Dockerfile              # NVIDIA CUDA 12.1 + Python 3.11 映像
 ├── docker-compose.yml      # 含 GPU 支援與 ngrok tunnel
-├── requirements.txt
+├── .python-version       # uv 本機 Python 版本固定檔
+├── pyproject.toml        # Python 專案 metadata 與依賴群組
+├── uv.lock               # 可重現安裝的依賴 lockfile
+├── requirements.txt      # uv 遷移期間保留的舊版相容匯出檔
 ├── .env.example            # 環境變數範本
 └── data/
     ├── ntuai_zh_base.md                # Markdown 知識庫文件（RAG 資料來源）
@@ -218,34 +221,29 @@ docker-compose down            # 停止服務
 ### 本地開發
 
 ```bash
-uv venv
-uv pip install -r requirements.txt
-uv pip install -r requirements-dev.txt
-uv pip install -e .
-. .venv/bin/activate
+# 建立專案環境
+uv sync --dev
+
+# 執行測試
+uv run pytest
+
+# 查看現有指令
+uv run ian --help
 
 # 啟動 MCP Server
-ian mcp --http --port 5191 &
+uv run ian mcp --http --port 5191 &
 
 # 啟動 FB/LINE Webhook
-ian webhook &
+uv run ian webhook &
 
 # 啟動 Daily Event Reminder
-ian reminder --daemon &
+uv run ian reminder --daemon &
 
 # 啟動 Discord Bot
-ian discord
+uv run ian discord
 ```
 
-`requirements.txt` 會依平台選擇 FAISS 套件：macOS 本機安裝 `faiss-cpu`，Docker/Linux x86_64 CUDA 環境安裝 `faiss-gpu-cu12`。
-
-### 測試
-
-```bash
-.venv/bin/python -m pytest -q
-```
-
-目前可執行測試集中在 `tests/domain/`、`tests/services/` 與 CLI smoke tests；Agent、MCP、LLM、Discord、LINE、Google Sheets 等整合測試以 skipped placeholder 保留，等待後續 issue 補齊。
+FAISS 依賴在 `pyproject.toml` 以平台 marker 明確指定：macOS 安裝 `faiss-cpu`，Linux x86_64 / CUDA 容器安裝 `faiss-gpu-cu12`。
 
 ---
 
