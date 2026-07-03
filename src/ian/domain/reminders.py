@@ -107,4 +107,3 @@ def seconds_until_next_run(
     if current >= target:
         target += timedelta(days=1)
     return (target - current).total_seconds()
-

@@ -37,4 +37,3 @@ def validate_urls_in_response(
             response = response.replace(url, URL_PLACEHOLDER)
 
     return response
-

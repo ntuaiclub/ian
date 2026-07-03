@@ -81,7 +81,7 @@ class FAQView(discord.ui.View):
                     await interaction.followup.send(reaction_emoji)
                 return
             await interaction.followup.send(response)
-            
+
         except Exception as e:
             await interaction.followup.send("⚠️ Error.")
             print(f"Error processing FAQ button: {e}")
@@ -170,7 +170,7 @@ async def ask(interaction: discord.Interaction, prompt: str):
         await interaction.followup.send(bot_response)
         save_chat_history(user.name, user.display_name, prompt, bot_response)
         print("Message processed successfully")
-        
+
     except Exception as e:
         await interaction.followup.send("⚠️ Error.")
         print(f"Error processing message: {e}")

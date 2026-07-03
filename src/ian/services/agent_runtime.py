@@ -82,7 +82,7 @@ def send_startup_notification():
     try:
         tz_taipei = timezone(timedelta(hours=8))
         timestamp = datetime.now(tz_taipei).strftime("%Y-%m-%d %H:%M:%S")
-        
+
         message = (
             "```\n"
             "===================================================\n"
@@ -94,14 +94,14 @@ def send_startup_notification():
             "===================================================\n"
             "```"
         )
-        
+
         url = f"https://discord.com/api/v10/channels/{LOG_CHANNEL_ID}/messages"
         headers = {
             "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
             "Content-Type": "application/json"
         }
         payload = {"content": message}
-        
+
         response = requests.post(url, headers=headers, json=payload, timeout=10)
         if response.status_code != 200:
             eprint(f"Failed to send startup notification: {response.status_code} - {response.text}")
@@ -128,14 +128,14 @@ def _send_log_to_discord_sync(log_entry: dict):
         # Discord 訊息上限 2000 字元
         if len(message) > 1900:
             message = message[:1900] + "...(truncated)"
-        
+
         url = f"https://discord.com/api/v10/channels/{LOG_CHANNEL_ID}/messages"
         headers = {
             "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
             "Content-Type": "application/json"
         }
         payload = {"content": message}
-        
+
         response = requests.post(url, headers=headers, json=payload, timeout=10)
         if response.status_code != 200:
             eprint(f"Failed to send log to Discord: {response.status_code} - {response.text}")
@@ -146,7 +146,7 @@ def format_log_message(log_entry: dict) -> str:
     """格式化 log 訊息為 terminal 風格"""
     log_type = log_entry.get("type", "INFO")
     timestamp = log_entry.get("timestamp", "")
-    
+
     if log_type == "USER_MESSAGE":
         user = log_entry.get("user_name", "Unknown")
         role = log_entry.get("user_role", "")
@@ -163,7 +163,7 @@ def format_log_message(log_entry: dict) -> str:
             f"└─ Message  : {msg}\n"
             f"```"
         )
-    
+
     elif log_type == "TOOL_CALL":
         tool = log_entry.get("tool_name", "Unknown")
         args = log_entry.get("args", {})
@@ -175,7 +175,7 @@ def format_log_message(log_entry: dict) -> str:
             f"└─ Args : {args_str}\n"
             f"```"
         )
-    
+
     elif log_type == "TOOL_RESULT":
         tool = log_entry.get("tool_name", "Unknown")
         result = str(log_entry.get("result", ""))[:600]
@@ -186,7 +186,7 @@ def format_log_message(log_entry: dict) -> str:
             f"└─ Result : {result}\n"
             f"```"
         )
-    
+
     elif log_type == "AGENT_RESPONSE":
         user = log_entry.get("user_name", "Unknown")
         response = log_entry.get("response", "")[:800]
@@ -200,7 +200,7 @@ def format_log_message(log_entry: dict) -> str:
             f"└─ Response:\n{response}\n"
             f"```"
         )
-    
+
     elif log_type == "ERROR":
         error = log_entry.get("error", "Unknown error")
         context = log_entry.get("context", "")
@@ -211,7 +211,7 @@ def format_log_message(log_entry: dict) -> str:
             f"└─ Error   : {error}\n"
             f"```"
         )
-    
+
     elif log_type == "SESSION":
         action = log_entry.get("action", "")
         user = log_entry.get("user_name", "Unknown")
@@ -223,7 +223,7 @@ def format_log_message(log_entry: dict) -> str:
             f"└─ Session : {session}...\n"
             f"```"
         )
-    
+
     else:
         msg = log_entry.get('message', str(log_entry))
         return (
@@ -289,7 +289,7 @@ class DiscordLogCallbackHandler(BaseCallbackHandler):
         tool_name = kwargs.get("name", "tool")
         add_log("TOOL_RESULT", tool_name=tool_name, result=output)
         self.tool_results.append(_extract_text_from_output(output))
-    
+
     def on_tool_error(
         self,
         error: BaseException,
@@ -316,7 +316,7 @@ def check_and_update_usage(user_id: str) -> bool:
             user_data['count'] += 1
             print(f"Usage Tracking: User '{user_id}'. Count: {user_data['count']}")
             return True
-        
+
         else:
             print(f"Usage Tracking: User '{user_id}' has reached the daily limit of {DAILY_LIMIT}.")
             return False
@@ -479,9 +479,9 @@ async def run_agentic_workflow():
                 break
 
             # Log 使用者訊息
-            add_log("USER_MESSAGE", 
-                    user_name=user_name, 
-                    user_role=str(user_role), 
+            add_log("USER_MESSAGE",
+                    user_name=user_name,
+                    user_role=str(user_role),
                     message=question,
                     session_id=session_id,
                     platform=platform)
@@ -700,10 +700,10 @@ async def run_agentic_workflow():
 def start_dispatcher(user_name: str, current_time):
     """啟動事件循環線程（event-loop thread），首次呼叫時建立。"""
     global loop_agent, dispatcher_started
-    
+
     # 確保 log processor 已啟動
     start_log_processor()
-    
+
     with dispatcher_lock:
         if dispatcher_started:
             return loop_agent

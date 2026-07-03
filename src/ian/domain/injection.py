@@ -87,4 +87,3 @@ def detect_prompt_injection(text: str) -> bool:
             return True
 
     return False
-

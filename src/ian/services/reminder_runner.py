@@ -138,4 +138,3 @@ def daemon_loop():
         except Exception as e:
             eprint(f"[Reminder] Error during run: {e}")
             send_log(f"```\n[REMINDER] ERROR: {e}\n```")
-

@@ -1,0 +1,49 @@
+repos:
+  - repo: local
+    hooks:
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+        entry: uv run trailing-whitespace-fixer
+        language: system
+        types: [text]
+
+      - id: end-of-file-fixer
+        name: Fix end of files
+        entry: uv run end-of-file-fixer
+        language: system
+        types: [text]
+
+      - id: check-yaml
+        name: Check YAML
+        entry: uv run check-yaml
+        language: system
+        types: [yaml]
+
+      - id: check-json
+        name: Check JSON
+        entry: uv run check-json
+        language: system
+        types: [json]
+
+      - id: check-toml
+        name: Check TOML
+        entry: uv run check-toml
+        language: system
+        types: [toml]
+
+      - id: check-added-large-files
+        name: Check for added large files
+        entry: uv run check-added-large-files --maxkb=1000
+        language: system
+
+      - id: detect-private-key
+        name: Detect private keys
+        entry: uv run detect-private-key
+        language: system
+        types: [text]
+
+      - id: ruff-check
+        name: Ruff lint
+        entry: uv run ruff check
+        language: system
+        types_or: [python, pyi]

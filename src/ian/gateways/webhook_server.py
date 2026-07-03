@@ -125,7 +125,7 @@ def save_chat_history(sender_id, user_name, user_message, bot_response, platform
                 history = json.load(f)
             except json.JSONDecodeError:
                 history = []
-    
+
     time_data = get_current_time()
     history.append({
         "timestamp": time_data["nowdatetime"],
@@ -135,7 +135,7 @@ def save_chat_history(sender_id, user_name, user_message, bot_response, platform
         "user_message": user_message,
         "bot_response": bot_response,
     })
-    
+
     with open(CHAT_HISTORY_FILE, 'w', encoding='utf-8') as f:
         json.dump(history, f, ensure_ascii=False, indent=2)
 
@@ -255,11 +255,11 @@ async def webhook():
 # ====== Message Dispatch ======
 def handle_facebook_messages(data):
     cleanup_processed_messages()
-    
+
     for entry in data.get('entry', []):
         for messaging_event in entry.get('messaging', []):
             message_obj = messaging_event.get('message')
-            
+
             if message_obj and message_obj.get('text') and not message_obj.get('is_echo'):
                 mid = message_obj.get('mid')
                 if not mid:
@@ -270,7 +270,7 @@ def handle_facebook_messages(data):
                         print(f"偵測到重複的訊息 ID (mid: {mid})，已略過。")
                         continue
                     PROCESSED_MESSAGES[mid] = time.time()
-                
+
                 sender_id = messaging_event['sender']['id']
                 user_message = message_obj['text']
 
@@ -284,7 +284,7 @@ def line_callback():
     """LINE webhook 接收端點。"""
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(as_text=True)
-    
+
     try:
         line_handler.handle(body, signature)
     except InvalidSignatureError:
@@ -292,7 +292,7 @@ def line_callback():
         abort(400)
     except Exception as e:
         eprint(f"LINE CALLBACK: handler.handle() 發生例外: {e}")
-    
+
     return "OK", 200
 
 @line_handler.add(MessageEvent, message=TextMessage)
@@ -300,7 +300,7 @@ def handle_line_message(event):
     """處理 LINE 訊息事件。"""
     user_text = event.message.text
     user_id = event.source.user_id
-    
+
     source_type = "1on1"
     chat_id = None
     if hasattr(event.source, 'group_id'):
@@ -311,22 +311,22 @@ def handle_line_message(event):
         source_type = "room"
     else:
         chat_id = event.source.user_id
-    
+
     if source_type != "1on1" and chat_id not in LINE_ALLOWED_GROUPS:
         eprint(f"LINE: 來源 {chat_id} 不在白名單中，忽略")
         return
-    
+
     actual_question = user_text.strip()
-    
+
     if not actual_question:
         line_bot_api.reply_message(
-            event.reply_token, 
+            event.reply_token,
             TextSendMessage(text="請輸入您的問題！")
         )
         return
-    
+
     eprint(f"LINE: [{source_type}:{chat_id}] 收到 {user_id} 的訊息: {actual_question}")
-    
+
     # 顯示 LINE 載入動畫
     try:
         loading_url = 'https://api.line.me/v2/bot/chat/loading/start'
@@ -341,7 +341,7 @@ def handle_line_message(event):
         requests.post(loading_url, headers=headers, json=loading_data, timeout=3)
     except Exception as e:
         eprint(f"LINE: 載入動畫啟動失敗: {e}")
-    
+
     coro = process_line_message_task(event.reply_token, user_id, actual_question, chat_id, source_type)
     thread = threading.Thread(target=run_async_in_thread, args=(coro,))
     thread.start()
@@ -369,25 +369,25 @@ async def process_line_message_task(reply_token, user_id, user_message, chat_id,
             platform="LINE",
             account_id=user_id,
         )
-        
+
         is_no_response, _ = parse_no_response(bot_response)
         if is_no_response:
             eprint("LINE: Agent 決定不回覆此訊息")
             return
-        
+
         if "已達今日使用上限" in bot_response:
             eprint("LINE: 使用者已達上限，不回覆")
             return
-        
+
         # 處理長訊息分段
         MAX_CHUNK_LENGTH = 2000
         text_chunks = []
-        
+
         if len(bot_response) > MAX_CHUNK_LENGTH:
             # 先嘗試用雙換行分段
             paragraphs = bot_response.split("\n\n")
             current_chunk = ""
-            
+
             for para in paragraphs:
                 if len(current_chunk) + len(para) + 2 <= MAX_CHUNK_LENGTH:
                     current_chunk += para + "\n\n"
@@ -395,19 +395,19 @@ async def process_line_message_task(reply_token, user_id, user_message, chat_id,
                     if current_chunk:
                         text_chunks.append(current_chunk.strip())
                     current_chunk = para + "\n\n"
-            
+
             if current_chunk:
                 text_chunks.append(current_chunk.strip())
         else:
             text_chunks = [bot_response]
-        
+
         # 產生 LINE 訊息（最多 5 則）
         MAX_MESSAGES = 5
         line_messages = []
         for chunk in text_chunks[:MAX_MESSAGES]:
             if chunk.strip():
                 line_messages.append(TextSendMessage(text=chunk.strip()))
-        
+
         if line_messages:
             try:
                 line_bot_api.reply_message(reply_token, line_messages)
@@ -420,7 +420,7 @@ async def process_line_message_task(reply_token, user_id, user_message, chat_id,
 
         save_chat_history(user_id, user_name, user_message, bot_response, "LINE")
         eprint(f"LINE: 訊息處理完成並已回覆給 {user_name}")
-        
+
     except Exception as e:
         eprint(f"LINE: 背景訊息處理任務發生錯誤: {e}")
         import traceback
