@@ -1,15 +1,13 @@
-import os
 import sys
 import time
 
 import requests
 
+from ian.config import DISCORD_BOT_TOKEN, DISCORD_LOG_CHANNEL_ID
 from ian.domain.reminders import get_valid_bound_members
 
 
-DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
-LOG_CHANNEL_ID = os.environ.get("DISCORD_LOG_CHANNEL_ID", "")
-STAFF_NOTIFICATION_CHANNEL_ID = os.environ.get("STAFF_NOTIFICATION_CHANNEL_ID", "861698653231382568")
+LOG_CHANNEL_ID = DISCORD_LOG_CHANNEL_ID
 STAFF_ROLE_KEYWORDS = ("社長", "部長", "部員")
 
 

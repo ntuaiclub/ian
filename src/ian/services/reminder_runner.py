@@ -1,6 +1,5 @@
 import json
 import io
-import os
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -9,7 +8,7 @@ from urllib.parse import quote
 import pandas as pd
 import requests
 
-from ian.config import MEMBER_DB_FILE
+from ian.config import COURSE_DATA_URL, MEMBER_DB_FILE
 from ian.domain.reminders import (
     find_events_on_date,
     format_reminder_message,
@@ -19,8 +18,6 @@ from ian.domain.reminders import (
 from ian.services.notifications import send_discord_dm, send_log
 
 TZ_TPE = timezone(timedelta(hours=8))
-
-COURSE_DATA_URL = os.environ.get("COURSE_DATA_URL", "")
 
 REMINDER_HOUR = 19
 REMINDER_MINUTE = 0

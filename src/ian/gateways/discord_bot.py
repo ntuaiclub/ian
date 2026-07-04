@@ -4,6 +4,8 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime, timedelta, timezone
+
+from ian.config import DISCORD_BOT_TOKEN
 from ian.services.agent_runtime import (
     start_dispatcher,
     start_log_processor,
@@ -191,11 +193,10 @@ async def clear(interaction: discord.Interaction):
         print(f"Error clearing session: {e}")
 
 def main():
-    bot_token = os.environ.get("DISCORD_BOT_TOKEN", "")
-    if not bot_token:
+    if not DISCORD_BOT_TOKEN:
         print("Error: DISCORD_BOT_TOKEN not found in environment variables.")
         raise SystemExit(1)
-    bot.run(bot_token)
+    bot.run(DISCORD_BOT_TOKEN)
 
 
 if __name__ == "__main__":

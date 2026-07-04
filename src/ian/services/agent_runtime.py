@@ -3,7 +3,6 @@ Agent SYS_PROMPT 在下方約三百行處
 """
 
 import asyncio
-import os
 import sys
 import threading
 import time
@@ -20,6 +19,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt import create_react_agent
 
+from ian.config import DISCORD_BOT_TOKEN, DISCORD_LOG_CHANNEL_ID_INT, GOOGLE_API_KEY
 from ian.domain.injection import INJECTION_REJECTION_MSG, detect_prompt_injection
 from ian.domain.urls import (
     URL_PATTERN,
@@ -61,8 +61,7 @@ TIMEOUT_SECONDS = 900
 # ---------------------------------------------------------------------------
 # Discord logging
 # ---------------------------------------------------------------------------
-LOG_CHANNEL_ID = int(os.environ.get("DISCORD_LOG_CHANNEL_ID", "1452311123574390886"))
-DISCORD_BOT_TOKEN = os.environ.get("DISCORD_BOT_TOKEN", "")
+LOG_CHANNEL_ID = DISCORD_LOG_CHANNEL_ID_INT
 log_queue: Queue = Queue()
 log_processor_started = False
 
@@ -457,7 +456,7 @@ async def run_agentic_workflow():
     """Main event loop: dequeue requests and invoke the LangGraph agent."""
     global sessions
     client = MultiServerMCPClient(mcp_config)
-    google_api_key = os.environ.get("GOOGLE_API_KEY", "")
+    google_api_key = GOOGLE_API_KEY
     if not google_api_key:
         print("Error: GOOGLE_API_KEY not found in environment variables.")
     primary_llm = ChatGoogleGenerativeAI(
