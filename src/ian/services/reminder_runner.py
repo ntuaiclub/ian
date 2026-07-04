@@ -1,6 +1,5 @@
 import json
 import io
-import sys
 import time
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
@@ -16,14 +15,12 @@ from ian.domain.reminders import (
     seconds_until_next_run,
 )
 from ian.services.notifications import send_discord_dm, send_log
+from ian.utils.console import eprint
 
 TZ_TPE = timezone(timedelta(hours=8))
 
 REMINDER_HOUR = 19
 REMINDER_MINUTE = 0
-
-def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
 
 
 def load_members() -> list[dict]:

@@ -1,10 +1,10 @@
 import warnings
 
 import asyncio
-import sys
 from typing import Optional, Tuple
 
 import pandas as pd
+from mcp.server.fastmcp import FastMCP
 
 from ian.config import (
     ALLOWED_CHANNELS,
@@ -25,14 +25,9 @@ from ian.services.member_store import (
     update_personal_prompt as _update_personal_prompt,
     update_subscribe as _update_subscribe,
 )
-from mcp.server.fastmcp import FastMCP
+from ian.utils.console import eprint
 
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
-
-
-def eprint(*args, **kwargs):
-    """Print to stderr to avoid interfering with MCP stdio transport."""
-    print(*args, file=sys.stderr, **kwargs)
 
 
 # ---------------------------------------------------------------------------

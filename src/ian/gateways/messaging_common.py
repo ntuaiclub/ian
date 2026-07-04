@@ -1,15 +1,9 @@
 import json
 import os
-import sys
 from datetime import datetime, timedelta, timezone
 
 UPLOAD_DIR = "uploads"
 CHAT_HISTORY_FILE = os.path.join(UPLOAD_DIR, "chat_history.json")
-
-
-def eprint(*args, **kwargs):
-    """Print to stderr."""
-    print(*args, file=sys.stderr, **kwargs)
 
 
 def get_current_time():

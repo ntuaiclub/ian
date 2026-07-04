@@ -3,7 +3,6 @@ import json
 import math
 import os
 import re
-import sys
 from collections import Counter
 from functools import lru_cache
 from typing import Any, Dict, List, Tuple
@@ -16,10 +15,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from ian.config import CACHE_DIR, DATA_DIR
-
-
-def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
+from ian.utils.console import eprint
 
 
 vector_store = None

@@ -7,7 +7,6 @@ import requests
 
 from ian.config import MEMBER_MAPPING_FILE, PAGE_ACCESS_TOKEN
 from ian.gateways.messaging_common import (
-    eprint,
     get_current_time,
     save_chat_history,
 )
@@ -16,6 +15,7 @@ from ian.services.member_store import (
     get_member_name as get_member_name_from_db,
     get_member_role as get_member_role_from_db,
 )
+from ian.utils.console import eprint
 
 MAPPING_FILE_PATH = MEMBER_MAPPING_FILE
 
