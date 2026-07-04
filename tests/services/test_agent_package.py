@@ -35,3 +35,11 @@ def test_agent_runtime_has_prompt_and_session_modules():
     assert "sessions =" not in runtime_source
     assert "from ian.services.agent.prompt import SYS_PROMPT" in runtime_source
     assert "from ian.services.agent.sessions import" in runtime_source
+
+
+def test_agent_runtime_uses_langchain_agent_factory():
+    runtime_source = Path("src/ian/services/agent/runtime.py").read_text()
+
+    assert "from langgraph.prebuilt" not in runtime_source
+    assert "create_react_agent" not in runtime_source
+    assert "from langchain.agents import create_agent" in runtime_source
