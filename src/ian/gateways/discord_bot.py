@@ -6,7 +6,7 @@ from discord import app_commands
 from datetime import datetime, timedelta, timezone
 
 from ian.config import DISCORD_BOT_TOKEN
-from ian.services.agent_runtime import (
+from ian.services.agent import (
     start_dispatcher,
     start_log_processor,
     send_startup_notification,

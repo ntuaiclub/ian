@@ -11,7 +11,7 @@ from ian.gateways.messaging_common import (
     get_current_time,
     save_chat_history,
 )
-from ian.services.agent_runtime import (
+from ian.services.agent import (
     add_log,
     chat_with_agent,
     parse_no_response,
