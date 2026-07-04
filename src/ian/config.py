@@ -42,6 +42,7 @@ LINE_CHANNEL_SECRET = _env("LINE_CHANNEL_SECRET")
 MEMBER_API_URL = _env("MEMBER_API_URL")
 MEMBER_API_KEY = _env("MEMBER_API_KEY")
 MEMBER_DB_FILE = DATA_DIR / "member_db.json"
+MEMBER_MAPPING_FILE = DATA_DIR / "member_mapping.csv"
 
 ALLOWED_DISCORD_CHANNELS = [
     c.strip() for c in _env("DISCORD_ALLOWED_CHANNELS").split(",") if c.strip()

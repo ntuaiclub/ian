@@ -11,6 +11,8 @@
   │ ian.gateways             │◄──►│ ian.gateways             │
   │ - discord_bot            │    │ - mcp_server             │
   │ - webhook_server         │    │ - Hybrid RAG             │
+  │ - facebook_webhook       │    │                          │
+  │ - line_webhook           │    │                          │
   │                          │    │ - 課程 / 通知 / 綁定工具 │
   └────────────┬─────────────┘    └──────────────────────────┘
                │                              ▲
@@ -32,7 +34,7 @@
 
 ### 各層職責
 
-- **Gateway 層**：各平台入口。`ian.gateways.discord_bot` 處理 Discord Slash Commands；`ian.gateways.webhook_server` (Flask) 處理 Facebook Messenger 與 LINE Webhook。
+- **Gateway 層**：各平台入口。`ian.gateways.discord_bot` 處理 Discord Slash Commands；`ian.gateways.webhook_server` (Flask) 負責 Webhook route wiring，並委派給 `ian.gateways.facebook_webhook` 與 `ian.gateways.line_webhook` 處理 Facebook Messenger / LINE 平台細節。
 - **Host Agent Client**：`ian.services.agent_runtime` 使用 LangGraph `create_react_agent` 搭配 Google Gemini 3 Flash，透過 MCP 協定調用工具，並管理每位使用者的獨立對話 session。
 - **MCP Tool Server**：`ian.gateways.mcp_server` 以 FastMCP 框架透過 SSE 提供 RAG 搜尋、課程查詢、幹部通知、社員綁定、簽到碼產生、訂閱管理、個性備註等工具。
 - **Member DB**：`ian.services.member_store` 從 Google Apps Script API 同步社員資料至本地 JSON 快取，提供平台帳號查詢、角色辨識、Email 綁定、訂閱管理與個性備註功能。
@@ -154,7 +156,7 @@ ntuai-watson-agent/
 
 ### FB / LINE Webhook (`ian.gateways.webhook_server`)
 
-Flask Web Server，接收各平台 webhook 並在背景執行緒處理訊息。
+Flask Web Server，接收各平台 webhook 並在背景執行緒處理訊息。`webhook_server` 保留 Flask route 與健康檢查；Facebook Messenger 行為位於 `ian.gateways.facebook_webhook`，LINE 行為位於 `ian.gateways.line_webhook`，共用時間與聊天紀錄 helper 位於 `ian.gateways.messaging_common`。
 
 | 平台 | 端點 | 說明 |
 |------|------|------|
