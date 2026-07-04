@@ -13,6 +13,13 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.exceptions import InvalidSignatureError
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
+from ian.config import (
+    FB_VERIFY_TOKEN,
+    LINE_ALLOWED_GROUPS,
+    LINE_CHANNEL_ACCESS_TOKEN,
+    LINE_CHANNEL_SECRET,
+    PAGE_ACCESS_TOKEN,
+)
 from ian.services.agent_runtime import (
     add_log,
     chat_with_agent,
@@ -33,22 +40,12 @@ def eprint(*args, **kwargs):
 app = Flask(__name__)
 
 # ====== Facebook Configuration ======
-PAGE_ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN", "")
-VERIFY_TOKEN = os.environ.get("FB_VERIFY_TOKEN", "")
+VERIFY_TOKEN = FB_VERIFY_TOKEN
 UPLOAD_DIR = "uploads"
 CHAT_HISTORY_FILE = os.path.join(UPLOAD_DIR, "chat_history.json")
 MAPPING_FILE_PATH = "./data/member_mapping.csv"
 
 # ====== LINE Bot Configuration ======
-LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")
-LINE_CHANNEL_SECRET = os.environ.get("LINE_CHANNEL_SECRET", "")
-# LINE 群組白名單
-LINE_ALLOWED_GROUPS = [
-    group_id.strip()
-    for group_id in os.environ.get("LINE_ALLOWED_GROUPS", "").split(",")
-    if group_id.strip()
-]
-
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 line_handler = WebhookHandler(LINE_CHANNEL_SECRET)
 

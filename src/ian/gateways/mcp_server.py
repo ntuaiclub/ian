@@ -1,12 +1,19 @@
 import warnings
 
 import asyncio
-import os
 import sys
 from typing import Optional, Tuple
 
 import pandas as pd
 
+from ian.config import (
+    ALLOWED_CHANNELS,
+    COURSE_DATA_URL,
+    DISCORD_LOG_CHANNEL_ID,
+    MCP_HOST,
+    MCP_PORT,
+    STAFF_NOTIFICATION_CHANNEL_ID,
+)
 from ian.services import course_catalog
 from ian.services import notifications
 from ian.services import rag
@@ -31,19 +38,12 @@ def eprint(*args, **kwargs):
 # ---------------------------------------------------------------------------
 # MCP server instance
 # ---------------------------------------------------------------------------
-MCP_HOST = os.environ.get("MCP_HOST", "0.0.0.0")
-MCP_PORT = int(os.environ.get("MCP_PORT", "5191"))
 mcp = FastMCP(host=MCP_HOST, port=MCP_PORT, stateless_http=True)
 
 # ---------------------------------------------------------------------------
 # Permission control
 # ---------------------------------------------------------------------------
 NON_MEMBER_PREFIX = "非社員"
-# Discord Channel IDs 具有完整權限（從 .env 讀取）
-ALLOWED_DISCORD_CHANNELS = [c.strip() for c in os.environ.get("DISCORD_ALLOWED_CHANNELS", "").split(",") if c.strip()]
-# LINE 白名單群組也具有完整權限（從 .env 讀取，自動同步）
-LINE_ALLOWED_GROUPS = [g.strip() for g in os.environ.get("LINE_ALLOWED_GROUPS", "").split(",") if g.strip()]
-ALLOWED_CHANNELS = ALLOWED_DISCORD_CHANNELS + LINE_ALLOWED_GROUPS
 
 
 def check_user_permission(
@@ -72,7 +72,7 @@ def check_user_permission(
 
 try:
     rag.initialize_rag_system()
-    course_catalog.load_course_data_from_url(os.environ.get("COURSE_DATA_URL", ""))
+    course_catalog.load_course_data_from_url(COURSE_DATA_URL)
 except Exception as e:
     eprint(f"初始化錯誤: {e}")
 
@@ -115,7 +115,7 @@ async def search_course_chunks_by_semantics(
         # 使用 asyncio.to_thread 避免阻塞 event loop（requests.get / time.sleep 都是同步阻塞）
         await asyncio.to_thread(
             course_catalog.load_course_data_from_url,
-            os.environ.get("COURSE_DATA_URL", ""),
+            COURSE_DATA_URL,
         )
 
         # 權限檢查 — 角色一律從綁定 DB 查，不採信 LLM 傳進來的字串
@@ -248,7 +248,7 @@ async def notify_staff(message: str, user_name: str = "", platform: Optional[str
 
         success = await asyncio.to_thread(
             notifications.send_discord_channel_message,
-            notifications.STAFF_NOTIFICATION_CHANNEL_ID,
+            STAFF_NOTIFICATION_CHANNEL_ID,
             notification,
         )
 
@@ -392,7 +392,7 @@ def _get_upcoming_events(limit: int = 3) -> list[dict]:
     tz_tpe = timezone(timedelta(hours=8))
     today = datetime.now(tz_tpe).strftime("%Y/%m/%d")
 
-    course_catalog.load_course_data_from_url(os.environ.get("COURSE_DATA_URL", ""))
+    course_catalog.load_course_data_from_url(COURSE_DATA_URL)
     df = course_catalog.course_data
     if df is None or df.empty:
         return []
@@ -422,7 +422,7 @@ def _get_upcoming_events(limit: int = 3) -> list[dict]:
 
 def _find_event_by_date(target_date: str) -> dict | None:
     """Find a single event by exact date (YYYY/MM/DD)."""
-    course_catalog.load_course_data_from_url(os.environ.get("COURSE_DATA_URL", ""))
+    course_catalog.load_course_data_from_url(COURSE_DATA_URL)
     df = course_catalog.course_data
     if df is None or df.empty:
         return None
@@ -495,7 +495,7 @@ async def notify_members(role: str, event_date: str = "", note: str = "", custom
 
         await asyncio.to_thread(
             notifications.send_discord_channel_message,
-            os.environ.get("DISCORD_LOG_CHANNEL_ID", "1452311123574390886"),
+            DISCORD_LOG_CHANNEL_ID,
             f"```\n[STAFF NOTIFY] Custom message\n"
             f"Discord: {result['discord_ok']}/{result['discord_ok']+result['discord_fail']}\n```"
         )
@@ -523,7 +523,7 @@ async def notify_members(role: str, event_date: str = "", note: str = "", custom
 
         await asyncio.to_thread(
             notifications.send_discord_channel_message,
-            os.environ.get("DISCORD_LOG_CHANNEL_ID", "1452311123574390886"),
+            DISCORD_LOG_CHANNEL_ID,
             f"```\n[STAFF NOTIFY] {event['title']} ({event_date})\n"
             f"Discord: {result['discord_ok']}/{result['discord_ok']+result['discord_fail']}\n```"
         )
