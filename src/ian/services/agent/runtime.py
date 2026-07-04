@@ -6,10 +6,10 @@ from concurrent.futures import Future
 from datetime import datetime, timedelta, timezone
 from queue import Queue
 
+from langchain.agents import create_agent
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.prebuilt import create_react_agent
 
 from ian.config import GOOGLE_API_KEY
 from ian.domain.injection import INJECTION_REJECTION_MSG, detect_prompt_injection
@@ -116,10 +116,10 @@ async def run_agentic_workflow():
                 # Initialize or re-initialize agent if needed
                 if session.get("agent") is None:
                     memory = MemorySaver()
-                    agent = create_react_agent(
+                    agent = create_agent(
                         model=llm,
                         tools=tools,
-                        prompt=SYS_PROMPT,
+                        system_prompt=SYS_PROMPT,
                         checkpointer=memory,
                     )
                     set_session_agent(session_id, agent, memory)
@@ -174,10 +174,10 @@ async def run_agentic_workflow():
                             client = MultiServerMCPClient(mcp_config)
                             tools = await client.get_tools()
                         memory = MemorySaver()
-                        new_agent = create_react_agent(
+                        new_agent = create_agent(
                             model=llm,
                             tools=tools,
-                            prompt=SYS_PROMPT,
+                            system_prompt=SYS_PROMPT,
                             checkpointer=memory,
                         )
                         with sessions_lock:
