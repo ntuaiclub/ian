@@ -8,9 +8,8 @@ from urllib.parse import quote
 
 import pandas as pd
 import requests
-from dotenv import load_dotenv
 
-from ian.config import MEMBER_DB_FILE, PROJECT_ROOT
+from ian.config import MEMBER_DB_FILE
 from ian.domain.reminders import (
     find_events_on_date,
     format_reminder_message,
@@ -18,8 +17,6 @@ from ian.domain.reminders import (
     seconds_until_next_run,
 )
 from ian.services.notifications import send_discord_dm, send_log
-
-load_dotenv(PROJECT_ROOT / ".env")
 
 TZ_TPE = timezone(timedelta(hours=8))
 

@@ -2,8 +2,12 @@ import os
 from datetime import timedelta, timezone
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+load_dotenv(PROJECT_ROOT / ".env")
+
 TZ_TPE = timezone(timedelta(hours=8))
 
 MCP_HOST = os.environ.get("MCP_HOST", "0.0.0.0")
