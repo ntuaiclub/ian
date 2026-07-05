@@ -34,5 +34,6 @@ Thumbs.db
 
 # Project specific
 uploads/
+cache/
 data/
 *.egg-info/
