@@ -14,6 +14,7 @@ def test_cli_lists_service_commands():
     assert "webhook" in result.output
     assert "reminder" in result.output
     assert "discord" in result.output
+    assert "serve" in result.output
 
 
 def test_mcp_command_delegates_to_app(monkeypatch):
@@ -42,6 +43,20 @@ def test_reminder_command_delegates_to_app(monkeypatch):
 
     assert result.exit_code == 0
     assert calls == [{"target_date": "2026/03/07", "dry": True, "daemon": False}]
+
+
+def test_serve_command_delegates_to_app(monkeypatch):
+    calls = []
+
+    def fake_main(mcp_port=5191, health_timeout=90):
+        calls.append({"mcp_port": mcp_port, "health_timeout": health_timeout})
+
+    monkeypatch.setattr(cli, "_run_serve", fake_main)
+
+    result = runner.invoke(cli.app, ["serve", "--mcp-port", "6001", "--health-timeout", "10"])
+
+    assert result.exit_code == 0
+    assert calls == [{"mcp_port": 6001, "health_timeout": 10}]
 
 
 def test_webhook_command_accepts_valid_platform(monkeypatch):

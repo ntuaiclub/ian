@@ -31,8 +31,6 @@ RUN echo "--- Installed Packages List ---" && \
 COPY . .
 RUN uv sync --locked --no-dev
 
-RUN chmod +x start.sh
-
 EXPOSE 5190
 
-CMD ["./start.sh"]
+CMD ["ian", "serve"]
