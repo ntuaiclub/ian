@@ -111,12 +111,19 @@ def lookup_member_by_platform(platform: str, account_id: str) -> Optional[dict]:
     return None
 
 
+def _lookup_member_with_reload(platform: str, account_id: str) -> Optional[dict]:
+    """Find a member, reloading local data once if the in-memory cache misses."""
+    member = lookup_member_by_platform(platform, account_id)
+    if member:
+        return member
+
+    load_member_db()
+    return lookup_member_by_platform(platform, account_id)
+
+
 def get_member_name(platform: str, account_id: str) -> Optional[str]:
     """Return the member's name (id field) by platform account ID, or None if not found."""
-    member = lookup_member_by_platform(platform, account_id)
-    if not member:
-        load_member_db()
-        member = lookup_member_by_platform(platform, account_id)
+    member = _lookup_member_with_reload(platform, account_id)
     if member:
         return member.get("id", "").strip() or None
     return None
@@ -131,11 +138,7 @@ def get_member_role(platform: str, account_id: str) -> str:
     If not found in memory, reloads from local file in case another
     process (e.g. MCP server) updated it via bind_email.
     """
-    member = lookup_member_by_platform(platform, account_id)
-    if not member:
-        # Reload from file — another process may have updated it
-        load_member_db()
-        member = lookup_member_by_platform(platform, account_id)
+    member = _lookup_member_with_reload(platform, account_id)
     if not member:
         return "非社員"
     if not is_valid_member(member):
@@ -344,10 +347,7 @@ def update_subscribe(platform: str, account_id: str, subscribe_str: str) -> dict
 
     Returns dict with 'success' (bool) and 'message' (str).
     """
-    member = lookup_member_by_platform(platform, account_id)
-    if not member:
-        load_member_db()
-        member = lookup_member_by_platform(platform, account_id)
+    member = _lookup_member_with_reload(platform, account_id)
     if not member:
         return {"success": False, "message": "找不到您的社員資料，請先透過 Email 綁定身分。"}
 
@@ -407,10 +407,7 @@ def update_personal_prompt(platform: str, account_id: str, prompt_text: str) -> 
 
     Returns dict with 'success' (bool) and 'message' (str).
     """
-    member = lookup_member_by_platform(platform, account_id)
-    if not member:
-        load_member_db()
-        member = lookup_member_by_platform(platform, account_id)
+    member = _lookup_member_with_reload(platform, account_id)
     if not member:
         return {"success": False, "message": "找不到您的社員資料，無法更新個人備註。"}
 
