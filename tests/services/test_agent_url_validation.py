@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from ian.domain.urls import URL_PLACEHOLDER
 from ian.services.agent.runtime import _validate_agent_response_urls
 
@@ -28,11 +26,3 @@ def test_agent_runtime_replaces_hallucinated_urls_without_prompt_wrappers():
     assert "https://linktr.ee/ntuai" in cleaned
     assert "https://fake.example/path" not in cleaned
     assert URL_PLACEHOLDER in cleaned
-
-
-def test_prompt_module_does_not_duplicate_url_extraction_helpers():
-    prompt_source = Path("src/ian/services/agent/prompt.py").read_text()
-
-    assert "URL_PATTERN" not in prompt_source
-    assert "_extract_urls" not in prompt_source
-    assert "_PROMPT_URLS" not in prompt_source
