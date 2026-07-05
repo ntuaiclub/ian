@@ -6,6 +6,7 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
 from ian.config import LINE_ALLOWED_GROUPS, LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
+from ian.domain.messages import split_message_chunks
 from ian.gateways.agent_bridge import run_agent_message_flow
 from ian.gateways.messaging_common import (
     get_current_time,
@@ -113,31 +114,10 @@ async def process_line_message_task(reply_token, user_id, user_message, chat_id,
             eprint("LINE: 使用者已達上限，不回覆")
             return
 
-        max_chunk_length = 2000
-        text_chunks = []
-
-        if len(agent_result.text) > max_chunk_length:
-            paragraphs = agent_result.text.split("\n\n")
-            current_chunk = ""
-
-            for para in paragraphs:
-                if len(current_chunk) + len(para) + 2 <= max_chunk_length:
-                    current_chunk += para + "\n\n"
-                else:
-                    if current_chunk:
-                        text_chunks.append(current_chunk.strip())
-                    current_chunk = para + "\n\n"
-
-            if current_chunk:
-                text_chunks.append(current_chunk.strip())
-        else:
-            text_chunks = [agent_result.text]
-
-        max_messages = 5
         line_messages = []
-        for chunk in text_chunks[:max_messages]:
+        for chunk in split_message_chunks(agent_result.text):
             if chunk.strip():
-                line_messages.append(TextSendMessage(text=chunk.strip()))
+                line_messages.append(TextSendMessage(text=chunk))
 
         if line_messages:
             try:
