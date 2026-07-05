@@ -6,11 +6,11 @@ import pandas as pd
 import requests
 
 from ian.config import MEMBER_MAPPING_FILE, PAGE_ACCESS_TOKEN
+from ian.gateways.agent_bridge import run_agent_message_flow
 from ian.gateways.messaging_common import (
     get_current_time,
     save_chat_history,
 )
-from ian.services.agent import chat_with_agent, parse_no_response, start_dispatcher
 from ian.services.member_store import (
     get_member_name as get_member_name_from_db,
     get_member_role as get_member_role_from_db,
@@ -130,13 +130,12 @@ async def process_message_task(sender_id, user_message, mid=None):
         print(f"傳送給 agent 的身分資訊: {roles}")
 
         current_time = get_current_time()
-        start_dispatcher(user_name, current_time)
-        bot_response = await chat_with_agent(
-            sender_id,
-            user_name,
-            user_message,
-            roles,
-            current_time["timestamp"],
+        agent_result = await run_agent_message_flow(
+            session_id=sender_id,
+            user_name=user_name,
+            user_message=user_message,
+            roles=roles,
+            current_time=current_time,
             channel_id="NaN",
             platform="FB",
             account_id=account_id,
@@ -144,15 +143,14 @@ async def process_message_task(sender_id, user_message, mid=None):
 
         await send_typing_indicator(sender_id, "typing_off")
 
-        is_no_response, reaction_emoji = parse_no_response(bot_response)
-        if is_no_response:
+        if not agent_result.should_reply:
             eprint("FB: Agent 決定不回覆此訊息")
-            if reaction_emoji and mid:
-                send_reaction(sender_id, mid, reaction_emoji)
+            if agent_result.reaction_emoji and mid:
+                send_reaction(sender_id, mid, agent_result.reaction_emoji)
             return
 
-        send_message(sender_id, bot_response)
-        save_chat_history(sender_id, user_name, user_message, bot_response, "FB")
+        send_message(sender_id, agent_result.text)
+        save_chat_history(sender_id, user_name, user_message, agent_result.text, "FB")
         print(f"FB 訊息處理完成並已回覆給 {user_name}")
 
     except Exception as e:
