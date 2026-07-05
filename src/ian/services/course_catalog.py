@@ -1,6 +1,5 @@
 import io
 import os
-import sys
 import time
 from datetime import datetime, timedelta
 from typing import Tuple
@@ -16,10 +15,7 @@ from ian.domain.courses import (
     normalize_date,
     parse_dates_from_query,
 )
-
-
-def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
+from ian.utils.console import eprint
 
 
 course_data = None

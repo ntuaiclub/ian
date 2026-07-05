@@ -1,10 +1,10 @@
 import json
-import sys
 import threading
 import time
-import requests
 from datetime import datetime, timedelta
 from typing import Optional
+
+import requests
 
 from ian.config import MEMBER_API_KEY, MEMBER_API_URL, MEMBER_DB_FILE, TZ_TPE
 from ian.domain.members import (
@@ -16,9 +16,8 @@ from ian.domain.members import (
     is_valid_member,
     normalize_email,
 )
+from ian.utils.console import eprint
 
-def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
 
 # ---------------------------------------------------------------------------
 # Configuration

@@ -1,18 +1,14 @@
-import sys
 import time
 
 import requests
 
 from ian.config import DISCORD_BOT_TOKEN, DISCORD_LOG_CHANNEL_ID
 from ian.domain.reminders import get_valid_bound_members
+from ian.utils.console import eprint
 
 
 LOG_CHANNEL_ID = DISCORD_LOG_CHANNEL_ID
 STAFF_ROLE_KEYWORDS = ("社長", "部長", "部員")
-
-
-def eprint(*args, **kwargs):
-    print(*args, file=sys.stderr, **kwargs)
 
 
 def send_discord_dm(user_id: str, text: str) -> bool:

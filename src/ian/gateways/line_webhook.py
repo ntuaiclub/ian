@@ -7,7 +7,6 @@ from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
 from ian.config import LINE_ALLOWED_GROUPS, LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
 from ian.gateways.messaging_common import (
-    eprint,
     get_current_time,
     save_chat_history,
 )
@@ -21,6 +20,7 @@ from ian.services.member_store import (
     get_member_name as get_member_name_from_db,
     get_member_role as get_member_role_from_db,
 )
+from ian.utils.console import eprint
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 line_handler = WebhookHandler(LINE_CHANNEL_SECRET)

@@ -3,8 +3,9 @@ from linebot.exceptions import InvalidSignatureError
 
 from ian.config import FB_VERIFY_TOKEN
 from ian.gateways import facebook_webhook, line_webhook
-from ian.gateways.messaging_common import eprint, get_current_time
+from ian.gateways.messaging_common import get_current_time
 from ian.services.member_store import init as init_member_db
+from ian.utils.console import eprint
 
 app = Flask(__name__)
 

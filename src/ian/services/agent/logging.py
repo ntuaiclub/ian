@@ -1,4 +1,3 @@
-import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -7,15 +6,11 @@ from queue import Queue
 import requests
 
 from ian.config import DISCORD_BOT_TOKEN, DISCORD_LOG_CHANNEL_ID_INT
+from ian.utils.console import eprint
 
 LOG_CHANNEL_ID = DISCORD_LOG_CHANNEL_ID_INT
 log_queue: Queue = Queue()
 log_processor_started = False
-
-
-def eprint(*args, **kwargs):
-    """Print to stderr."""
-    print(*args, file=sys.stderr, **kwargs)
 
 
 def start_log_processor():
