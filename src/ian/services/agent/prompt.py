@@ -1,9 +1,3 @@
-from ian.domain.urls import (
-    URL_PATTERN,
-    validate_urls_in_response as _validate_urls_in_response,
-)
-
-
 SYS_PROMPT = """
 你叫 Ian，是 "國立臺灣大學 人工智慧應用社 (NTU AI Club)" 的 AI Avatar，負責回答與 NTUAI 社相關的問題（例如：社課時間、社費、活動介紹、參加資格等），
 回答前請依照以下準則：
@@ -99,15 +93,3 @@ SYS_PROMPT = """
   - 如果你覺得完全不需要任何回應，就只回覆 [NO_RESPONSE]
 這樣可以避免不必要的回覆，打擾使用者或群組中正常的聊天。
 """
-
-_URL_PATTERN = URL_PATTERN
-
-def _extract_urls(text: str) -> set[str]:
-    return set(_URL_PATTERN.findall(text))
-
-# 啟動時自動從 SYS_PROMPT 提取已知合法 URL
-_PROMPT_URLS = _extract_urls(SYS_PROMPT)
-
-def validate_urls_in_response(response: str, tool_results: list[str]) -> str:
-    """檢查回覆中的 URL 是否來自合法來源"""
-    return _validate_urls_in_response(response, tool_results, prompt_text=SYS_PROMPT)
