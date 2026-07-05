@@ -3,9 +3,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from queue import Queue
 
-import requests
-
-from ian.config import DISCORD_BOT_TOKEN, DISCORD_LOG_CHANNEL_ID_INT
+from ian.config import DISCORD_LOG_CHANNEL_ID_INT
+from ian.services import discord_api
 from ian.utils.console import eprint
 
 LOG_CHANNEL_ID = DISCORD_LOG_CHANNEL_ID_INT
@@ -42,14 +41,7 @@ def send_startup_notification():
             "```"
         )
 
-        url = f"https://discord.com/api/v10/channels/{LOG_CHANNEL_ID}/messages"
-        headers = {
-            "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
-            "Content-Type": "application/json",
-        }
-        payload = {"content": message}
-
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response = discord_api.send_channel_message(LOG_CHANNEL_ID, message)
         if response.status_code != 200:
             eprint(
                 "Failed to send startup notification: "
@@ -80,14 +72,7 @@ def _send_log_to_discord_sync(log_entry: dict):
         if len(message) > 1900:
             message = message[:1900] + "...(truncated)"
 
-        url = f"https://discord.com/api/v10/channels/{LOG_CHANNEL_ID}/messages"
-        headers = {
-            "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
-            "Content-Type": "application/json",
-        }
-        payload = {"content": message}
-
-        response = requests.post(url, headers=headers, json=payload, timeout=10)
+        response = discord_api.send_channel_message(LOG_CHANNEL_ID, message)
         if response.status_code != 200:
             eprint(f"Failed to send log to Discord: {response.status_code} - {response.text}")
     except Exception as e:
