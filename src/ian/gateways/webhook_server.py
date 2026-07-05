@@ -63,10 +63,6 @@ def status():
         "platforms": ["Facebook", "LINE"]
     }, 200
 
-def main():
+def entrypoint():
     print("啟動 Flask 伺服器...")
     app.run(host='0.0.0.0', port=5190, debug=False)
-
-
-if __name__ == '__main__':
-    main()

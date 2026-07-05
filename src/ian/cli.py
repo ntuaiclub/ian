@@ -12,15 +12,15 @@ class WebhookPlatform(str, Enum):
 
 
 def _run_mcp(http: bool = False, host: str = "0.0.0.0", port: int = 5191) -> None:
-    from ian.gateways.mcp_server import main
+    from ian.gateways.mcp_server import entrypoint
 
-    main(http=http, host=host, port=port)
+    entrypoint(http=http, host=host, port=port)
 
 
 def _run_webhook() -> None:
-    from ian.gateways.webhook_server import main
+    from ian.gateways.webhook_server import entrypoint
 
-    main()
+    entrypoint()
 
 
 def _run_reminder(target_date: str | None = None, dry: bool = False, daemon: bool = False) -> None:
@@ -33,9 +33,15 @@ def _run_reminder(target_date: str | None = None, dry: bool = False, daemon: boo
 
 
 def _run_discord() -> None:
-    from ian.gateways.discord_bot import main
+    from ian.gateways.discord_bot import entrypoint
 
-    main()
+    entrypoint()
+
+
+def _run_serve(mcp_port: int = 5191, health_timeout: int = 90) -> None:
+    from ian.services.service_supervisor import serve_all
+
+    raise SystemExit(serve_all(mcp_port=mcp_port, health_timeout=health_timeout))
 
 
 @app.command()
@@ -74,6 +80,15 @@ def reminder(
 def discord() -> None:
     """Run the Discord bot."""
     _run_discord()
+
+
+@app.command()
+def serve(
+    mcp_port: int = typer.Option(5191, "--mcp-port", help="MCP HTTP server port."),
+    health_timeout: int = typer.Option(90, "--health-timeout", help="Seconds to wait for MCP health."),
+) -> None:
+    """Run the full Ian service stack."""
+    _run_serve(mcp_port=mcp_port, health_timeout=health_timeout)
 
 
 if __name__ == "__main__":

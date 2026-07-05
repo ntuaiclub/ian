@@ -543,7 +543,7 @@ async def notify_members(role: str, event_date: str = "", note: str = "", custom
     return "\n\n".join(lines)
 
 
-def main(http: bool = False, host: str = "0.0.0.0", port: int = 5191):
+def entrypoint(http: bool = False, host: str = "0.0.0.0", port: int = 5191):
     if http:
         # Use FastMCP's built-in streamable-http transport (stateless mode)
         # This avoids the SSE session leak in mcp/server/sse.py where
@@ -569,13 +569,3 @@ def main(http: bool = False, host: str = "0.0.0.0", port: int = 5191):
     else:
         eprint("Starting MCP server in stdio mode...")
         mcp.run(transport="stdio")
-
-
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="MCP Server for NTUAI RAG")
-    parser.add_argument("--http", action="store_true", help="Run in HTTP (SSE) mode instead of stdio")
-    parser.add_argument("--port", type=int, default=5191, help="Port for HTTP server (default: 5191)")
-    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host for HTTP server (default: 0.0.0.0)")
-    args = parser.parse_args()
-    main(http=args.http, host=args.host, port=args.port)

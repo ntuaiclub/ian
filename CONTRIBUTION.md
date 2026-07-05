@@ -68,6 +68,7 @@ uv run ian --help
 常見服務可分別啟動：
 
 ```bash
+uv run ian serve
 uv run ian mcp --http --port 5191
 uv run ian webhook
 uv run ian reminder --daemon
@@ -93,7 +94,7 @@ make docker-logs
 make docker-down
 ```
 
-容器啟動流程（`start.sh`）：
+容器透過 `ian serve` 依序啟動服務：
 
 1. 啟動 MCP Server（port 5191），等待 health check 通過（模型載入約需 60-90 秒）。
 2. 啟動 Flask Webhook Server（port 5190）。

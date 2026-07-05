@@ -176,12 +176,8 @@ async def clear(interaction: discord.Interaction):
         await interaction.response.send_message("⚠️ Error.")
         print(f"Error clearing session: {e}")
 
-def main():
+def entrypoint():
     if not DISCORD_BOT_TOKEN:
         print("Error: DISCORD_BOT_TOKEN not found in environment variables.")
         raise SystemExit(1)
     bot.run(DISCORD_BOT_TOKEN)
-
-
-if __name__ == "__main__":
-    main()
