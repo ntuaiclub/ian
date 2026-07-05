@@ -3,8 +3,32 @@ name: CI
 on:
   pull_request:
     branches: [main]
+    paths:
+      - src/**
+      - tests/**
+      - pyproject.toml
+      - uv.lock
+      - .python-version
+      - .pre-commit-config.yaml
+      - Makefile
+      - Dockerfile
+      - docker-compose.yml
+      - start.sh
+      - .github/workflows/ci.yml
   push:
     branches: [main]
+    paths:
+      - src/**
+      - tests/**
+      - pyproject.toml
+      - uv.lock
+      - .python-version
+      - .pre-commit-config.yaml
+      - Makefile
+      - Dockerfile
+      - docker-compose.yml
+      - start.sh
+      - .github/workflows/ci.yml
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
