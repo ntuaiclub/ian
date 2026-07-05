@@ -53,7 +53,8 @@ ntuai-watson-agent/
 ├── tests/
 │   ├── domain/             # 純邏輯 pytest 覆蓋
 │   ├── services/           # service 邊界 pytest 覆蓋
-│   └── agent/              # Agent/MCP/LLM 整合測試 placeholder（目前 intentionally skipped）
+│   ├── agent/              # Agent runtime placeholder（目前 intentionally skipped）
+│   └── integration/        # MCP/LLM/平台整合測試 placeholder（目前 intentionally skipped）
 ├── start.sh                # 容器啟動腳本（依序啟動各服務）
 ├── Dockerfile              # NVIDIA CUDA 12.1 + Python 3.11 映像
 ├── docker-compose.yml      # 含 GPU 支援與 ngrok tunnel

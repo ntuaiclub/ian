@@ -15,7 +15,7 @@
 - `src/ian/domain/`：無 I/O 的純邏輯，例如 prompt injection、URL、課程與社員判斷。
 - `src/ian/services/`：有狀態或外部 I/O 的服務，例如 RAG、member store、agent runtime、通知。
 - `src/ian/gateways/`：平台 adapter，例如 Discord、FB/LINE webhook、MCP server。
-- `tests/`：pytest 測試，依 domain、services、agent 分類。
+- `tests/`：pytest 測試，依 domain、services、agent、integration 分類；agent / integration 目前保留 skipped placeholders，避免預設測試依賴 LLM、MCP、平台 token 或外部服務。
 
 修改時請維持既有分層：純邏輯放在 `domain`，外部服務或狀態邊界放在 `services`，平台入口放在 `gateways`。
 
