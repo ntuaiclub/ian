@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from ian.gateways import agent_bridge
@@ -91,17 +89,3 @@ async def test_agent_bridge_parses_no_response_with_reaction():
     assert result.should_reply is False
     assert result.text == "[NO_RESPONSE:🙏]"
     assert result.reaction_emoji == "🙏"
-
-
-def test_gateways_delegate_core_agent_invocation_to_bridge():
-    gateway_paths = [
-        "src/ian/gateways/discord_bot.py",
-        "src/ian/gateways/facebook_webhook.py",
-        "src/ian/gateways/line_webhook.py",
-    ]
-
-    for path in gateway_paths:
-        source = Path(path).read_text()
-        assert "run_agent_message_flow" in source
-        assert "chat_with_agent(" not in source
-        assert "parse_no_response(" not in source

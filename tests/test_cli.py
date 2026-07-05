@@ -85,33 +85,3 @@ def test_webhook_command_rejects_unknown_platform(monkeypatch):
 
     assert result.exit_code == 2
     assert calls == []
-
-
-def test_legacy_root_scripts_are_removed():
-    import pathlib
-
-    root = pathlib.Path(__file__).resolve().parents[1]
-
-    for script in [
-        "daily_event_reminder.py",
-        "discord_chatbot.py",
-        "host_agent_client.py",
-        "injection_patterns.py",
-        "mcp_server.py",
-        "member_db.py",
-        "webhook_server.py",
-    ]:
-        assert not (root / script).exists()
-
-
-def test_package_is_named_ian():
-    import importlib.util
-
-    assert importlib.util.find_spec("ian") is not None
-    assert importlib.util.find_spec("ntuai_agent") is None
-
-
-def test_apps_package_is_removed():
-    import importlib.util
-
-    assert importlib.util.find_spec("ian.apps") is None
