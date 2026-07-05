@@ -10,6 +10,22 @@ from ian.utils.console import eprint
 app = Flask(__name__)
 
 VERIFY_TOKEN = FB_VERIFY_TOKEN
+PLATFORM_ALIASES = {
+    "all": {"Facebook", "LINE"},
+    "fb": {"Facebook"},
+    "line": {"LINE"},
+}
+ENABLED_WEBHOOK_PLATFORMS = PLATFORM_ALIASES["all"].copy()
+
+
+def configure_platforms(platform: str = "all") -> set[str]:
+    selected = PLATFORM_ALIASES.get(platform)
+    if selected is None:
+        raise ValueError(f"Unsupported webhook platform: {platform}")
+
+    global ENABLED_WEBHOOK_PLATFORMS
+    ENABLED_WEBHOOK_PLATFORMS = selected.copy()
+    return ENABLED_WEBHOOK_PLATFORMS
 
 # Initialize member database
 try:
@@ -21,6 +37,8 @@ except Exception as e:
 
 @app.route('/', methods=['GET'])
 async def verify():
+    if "Facebook" not in ENABLED_WEBHOOK_PLATFORMS:
+        abort(404)
     if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.challenge"):
         if request.args.get("hub.verify_token") == VERIFY_TOKEN:
             return request.args["hub.challenge"], 200
@@ -29,6 +47,8 @@ async def verify():
 
 @app.route('/', methods=['POST'])
 async def webhook():
+    if "Facebook" not in ENABLED_WEBHOOK_PLATFORMS:
+        abort(404)
     data = request.get_json()
     try:
         if data.get('object') == 'page':
@@ -41,6 +61,9 @@ async def webhook():
 @app.route('/line/callback', methods=['POST'])
 def line_callback():
     """LINE webhook 接收端點。"""
+    if "LINE" not in ENABLED_WEBHOOK_PLATFORMS:
+        abort(404)
+
     signature = request.headers.get("X-Line-Signature", "")
     body = request.get_data(as_text=True)
 
@@ -60,9 +83,10 @@ def status():
     return {
         "status": "running",
         "timestamp": get_current_time()["nowdatetime"],
-        "platforms": ["Facebook", "LINE"]
+        "platforms": sorted(ENABLED_WEBHOOK_PLATFORMS)
     }, 200
 
-def entrypoint():
-    print("啟動 Flask 伺服器...")
+def entrypoint(platform: str = "all"):
+    enabled = configure_platforms(platform)
+    print(f"啟動 Flask 伺服器... platforms={', '.join(sorted(enabled))}")
     app.run(host='0.0.0.0', port=5190, debug=False)

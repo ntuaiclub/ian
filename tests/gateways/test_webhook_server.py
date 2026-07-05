@@ -18,6 +18,61 @@ def test_webhook_post_delegates_facebook_messages(monkeypatch):
     assert calls == [{"object": "page", "entry": []}]
 
 
+def test_facebook_webhook_route_can_be_disabled(monkeypatch):
+    calls = []
+
+    def fake_handle_facebook_messages(data):
+        calls.append(data)
+
+    monkeypatch.setattr(facebook_webhook, "handle_facebook_messages", fake_handle_facebook_messages)
+    webhook_server.configure_platforms("line")
+
+    try:
+        client = webhook_server.app.test_client()
+        response = client.post("/", json={"object": "page", "entry": []})
+
+        assert response.status_code == 404
+        assert calls == []
+    finally:
+        webhook_server.configure_platforms("all")
+
+
+def test_line_webhook_route_can_be_disabled(monkeypatch):
+    calls = []
+
+    def fake_handle(body, signature):
+        calls.append({"body": body, "signature": signature})
+
+    monkeypatch.setattr(line_webhook.line_handler, "handle", fake_handle)
+    webhook_server.configure_platforms("fb")
+
+    try:
+        client = webhook_server.app.test_client()
+        response = client.post(
+            "/line/callback",
+            data="{}",
+            headers={"X-Line-Signature": "signature"},
+        )
+
+        assert response.status_code == 404
+        assert calls == []
+    finally:
+        webhook_server.configure_platforms("all")
+
+
+def test_webhook_status_reports_enabled_platforms():
+    webhook_server.configure_platforms("line")
+
+    try:
+        client = webhook_server.app.test_client()
+        response = client.get("/status")
+
+        assert response.status_code == 200
+        assert response.json["platforms"] == ["LINE"]
+    finally:
+        webhook_server.configure_platforms("all")
+
+
 def test_webhook_routes_use_split_gateway_modules():
     assert hasattr(facebook_webhook, "handle_facebook_messages")
     assert hasattr(line_webhook, "line_handler")

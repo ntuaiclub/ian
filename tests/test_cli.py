@@ -62,15 +62,15 @@ def test_serve_command_delegates_to_app(monkeypatch):
 def test_webhook_command_accepts_valid_platform(monkeypatch):
     calls = []
 
-    def fake_main():
-        calls.append("called")
+    def fake_main(platform="all"):
+        calls.append({"platform": platform})
 
     monkeypatch.setattr(cli, "_run_webhook", fake_main)
 
     result = runner.invoke(cli.app, ["webhook", "--platform", "line"])
 
     assert result.exit_code == 0
-    assert calls == ["called"]
+    assert calls == [{"platform": "line"}]
 
 
 def test_webhook_command_rejects_unknown_platform(monkeypatch):

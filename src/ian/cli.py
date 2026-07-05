@@ -17,10 +17,10 @@ def _run_mcp(http: bool = False, host: str = "0.0.0.0", port: int = 5191) -> Non
     entrypoint(http=http, host=host, port=port)
 
 
-def _run_webhook() -> None:
+def _run_webhook(platform: str = "all") -> None:
     from ian.gateways.webhook_server import entrypoint
 
-    entrypoint()
+    entrypoint(platform=platform)
 
 
 def _run_reminder(target_date: str | None = None, dry: bool = False, daemon: bool = False) -> None:
@@ -63,7 +63,7 @@ def webhook(
     ),
 ) -> None:
     """Run the Facebook/LINE webhook server."""
-    _run_webhook()
+    _run_webhook(platform=platform.value)
 
 
 @app.command()
