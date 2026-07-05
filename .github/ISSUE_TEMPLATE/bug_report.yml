@@ -3,7 +3,6 @@ description: Report a reproducible bug or unexpected behavior.
 title: "[Bug]: "
 labels:
   - bug
-  - triage
 body:
   - type: markdown
     attributes:
