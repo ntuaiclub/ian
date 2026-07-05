@@ -1,6 +1,14 @@
+from enum import Enum
+
 import typer
 
 app = typer.Typer(help="NTUAI Agent service entrypoints.")
+
+
+class WebhookPlatform(str, Enum):
+    all = "all"
+    fb = "fb"
+    line = "line"
 
 
 def _run_mcp(http: bool = False, host: str = "0.0.0.0", port: int = 5191) -> None:
@@ -41,7 +49,13 @@ def mcp(
 
 
 @app.command()
-def webhook() -> None:
+def webhook(
+    platform: WebhookPlatform = typer.Option(
+        WebhookPlatform.all,
+        "--platform",
+        help="Webhook routes to enable: all, fb, or line.",
+    ),
+) -> None:
     """Run the Facebook/LINE webhook server."""
     _run_webhook()
 

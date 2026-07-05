@@ -44,6 +44,34 @@ def test_reminder_command_delegates_to_app(monkeypatch):
     assert calls == [{"target_date": "2026/03/07", "dry": True, "daemon": False}]
 
 
+def test_webhook_command_accepts_valid_platform(monkeypatch):
+    calls = []
+
+    def fake_main():
+        calls.append("called")
+
+    monkeypatch.setattr(cli, "_run_webhook", fake_main)
+
+    result = runner.invoke(cli.app, ["webhook", "--platform", "line"])
+
+    assert result.exit_code == 0
+    assert calls == ["called"]
+
+
+def test_webhook_command_rejects_unknown_platform(monkeypatch):
+    calls = []
+
+    def fake_main():
+        calls.append("called")
+
+    monkeypatch.setattr(cli, "_run_webhook", fake_main)
+
+    result = runner.invoke(cli.app, ["webhook", "--platform", "slack"])
+
+    assert result.exit_code == 2
+    assert calls == []
+
+
 def test_legacy_root_scripts_are_removed():
     import pathlib
 
