@@ -6,15 +6,13 @@ from linebot import LineBotApi, WebhookHandler
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
 from ian.config import LINE_ALLOWED_GROUPS, LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
+from ian.gateways.agent_bridge import run_agent_message_flow
 from ian.gateways.messaging_common import (
     get_current_time,
     save_chat_history,
 )
 from ian.services.agent import (
     add_log,
-    chat_with_agent,
-    parse_no_response,
-    start_dispatcher,
 )
 from ian.services.member_store import (
     get_member_name as get_member_name_from_db,
@@ -96,32 +94,30 @@ async def process_line_message_task(reply_token, user_id, user_message, chat_id,
         eprint(f"LINE: 處理 {user_name} 的訊息：{user_message}")
 
         current_time = get_current_time()
-        start_dispatcher(user_name, current_time)
-        bot_response = await chat_with_agent(
-            user_id,
-            user_name,
-            user_message,
-            roles,
-            current_time["timestamp"],
+        agent_result = await run_agent_message_flow(
+            session_id=user_id,
+            user_name=user_name,
+            user_message=user_message,
+            roles=roles,
+            current_time=current_time,
             channel_id=str(chat_id),
             platform="LINE",
             account_id=user_id,
         )
 
-        is_no_response, _ = parse_no_response(bot_response)
-        if is_no_response:
+        if not agent_result.should_reply:
             eprint("LINE: Agent 決定不回覆此訊息")
             return
 
-        if "已達今日使用上限" in bot_response:
+        if "已達今日使用上限" in agent_result.text:
             eprint("LINE: 使用者已達上限，不回覆")
             return
 
         max_chunk_length = 2000
         text_chunks = []
 
-        if len(bot_response) > max_chunk_length:
-            paragraphs = bot_response.split("\n\n")
+        if len(agent_result.text) > max_chunk_length:
+            paragraphs = agent_result.text.split("\n\n")
             current_chunk = ""
 
             for para in paragraphs:
@@ -135,7 +131,7 @@ async def process_line_message_task(reply_token, user_id, user_message, chat_id,
             if current_chunk:
                 text_chunks.append(current_chunk.strip())
         else:
-            text_chunks = [bot_response]
+            text_chunks = [agent_result.text]
 
         max_messages = 5
         line_messages = []
@@ -154,7 +150,7 @@ async def process_line_message_task(reply_token, user_id, user_message, chat_id,
                 eprint(traceback.format_exc())
                 return
 
-        save_chat_history(user_id, user_name, user_message, bot_response, "LINE")
+        save_chat_history(user_id, user_name, user_message, agent_result.text, "LINE")
         eprint(f"LINE: 訊息處理完成並已回覆給 {user_name}")
 
     except Exception as e:

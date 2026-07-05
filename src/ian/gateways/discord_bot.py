@@ -3,16 +3,14 @@ import json
 import discord
 from discord.ext import commands
 from discord import app_commands
-from datetime import datetime, timedelta, timezone
 
 from ian.config import DISCORD_BOT_TOKEN
+from ian.gateways.agent_bridge import run_agent_message_flow
+from ian.gateways.messaging_common import get_current_time
 from ian.services.agent import (
-    start_dispatcher,
     start_log_processor,
     send_startup_notification,
-    chat_with_agent,
     clear_session,
-    parse_no_response,
 )
 from ian.services.member_store import get_member_role as get_member_role_from_db, init as init_member_db
 
@@ -39,14 +37,6 @@ def save_chat_history(sender_id, user_name, user_message, bot_response):
     except Exception as e:
         print(f"Error saving chat history: {e}")
 
-def get_current_time():
-    """回傳台灣時區 (UTC+8) 的時間資訊 dict。"""
-    now = datetime.now(timezone(timedelta(hours=8)))
-    return {
-        "nowdatetime": now.strftime("%Y/%m/%d %H:%M:%S"),
-        "nowday": now.strftime("%A"),
-        "timestamp": now.timestamp()
-    }
 
 # FAQ 按鈕視圖
 class FAQView(discord.ui.View):
@@ -64,25 +54,22 @@ class FAQView(discord.ui.View):
         current_time = get_current_time()
 
         try:
-            start_dispatcher(user.display_name, current_time)
-
-            response = await chat_with_agent(
-                user.name,
-                user.display_name,
-                prompt,
-                roles,
-                current_time["timestamp"],
-                str(interaction.channel_id),
+            agent_result = await run_agent_message_flow(
+                session_id=user.name,
+                user_name=user.display_name,
+                user_message=prompt,
+                roles=roles,
+                current_time=current_time,
+                channel_id=str(interaction.channel_id),
                 platform="Discord",
                 account_id=str(user.id),
             )
-            is_no_response, reaction_emoji = parse_no_response(response)
-            if is_no_response:
+            if not agent_result.should_reply:
                 print("Discord: Agent 決定不回覆此訊息")
-                if reaction_emoji:
-                    await interaction.followup.send(reaction_emoji)
+                if agent_result.reaction_emoji:
+                    await interaction.followup.send(agent_result.reaction_emoji)
                 return
-            await interaction.followup.send(response)
+            await interaction.followup.send(agent_result.text)
 
         except Exception as e:
             await interaction.followup.send("⚠️ Error.")
@@ -151,26 +138,23 @@ async def ask(interaction: discord.Interaction, prompt: str):
     )
 
     try:
-        start_dispatcher(user.display_name, current_time)
-
-        bot_response = await chat_with_agent(
-            user.name,
-            user.display_name,
-            prompt,
-            roles,
-            current_time["timestamp"],
-            str(interaction.channel_id),
+        agent_result = await run_agent_message_flow(
+            session_id=user.name,
+            user_name=user.display_name,
+            user_message=prompt,
+            roles=roles,
+            current_time=current_time,
+            channel_id=str(interaction.channel_id),
             platform="Discord",
             account_id=str(user.id),
         )
-        is_no_response, reaction_emoji = parse_no_response(bot_response)
-        if is_no_response:
+        if not agent_result.should_reply:
             print("Discord: Agent 決定不回覆此訊息")
-            if reaction_emoji:
-                await interaction.followup.send(reaction_emoji)
+            if agent_result.reaction_emoji:
+                await interaction.followup.send(agent_result.reaction_emoji)
             return
-        await interaction.followup.send(bot_response)
-        save_chat_history(user.name, user.display_name, prompt, bot_response)
+        await interaction.followup.send(agent_result.text)
+        save_chat_history(user.name, user.display_name, prompt, agent_result.text)
         print("Message processed successfully")
 
     except Exception as e:
