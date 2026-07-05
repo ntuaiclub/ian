@@ -1,9 +1,8 @@
 import time
 
-import requests
-
 from ian.config import DISCORD_BOT_TOKEN, DISCORD_LOG_CHANNEL_ID
 from ian.domain.reminders import get_valid_bound_members
+from ian.services import discord_api
 from ian.utils.console import eprint
 
 
@@ -12,27 +11,13 @@ STAFF_ROLE_KEYWORDS = ("社長", "部長", "部員")
 
 
 def send_discord_dm(user_id: str, text: str) -> bool:
-    headers = {
-        "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
-        "Content-Type": "application/json",
-    }
-    response = requests.post(
-        "https://discord.com/api/v10/users/@me/channels",
-        headers=headers,
-        json={"recipient_id": user_id},
-        timeout=10,
-    )
+    response = discord_api.create_dm_channel(user_id)
     if response.status_code != 200:
         eprint(f"  [Discord] Failed to create DM channel for {user_id}: {response.text}")
         return False
 
     dm_channel_id = response.json()["id"]
-    message_response = requests.post(
-        f"https://discord.com/api/v10/channels/{dm_channel_id}/messages",
-        headers=headers,
-        json={"content": text},
-        timeout=10,
-    )
+    message_response = discord_api.send_channel_message(dm_channel_id, text)
     if message_response.status_code != 200:
         eprint(f"  [Discord] Failed to send message to {user_id}: {message_response.text}")
         return False
@@ -50,12 +35,7 @@ def send_log(message: str):
 
 def send_discord_channel_message(channel_id: str, message: str) -> bool:
     try:
-        url = f"https://discord.com/api/v10/channels/{channel_id}/messages"
-        headers = {
-            "Authorization": f"Bot {DISCORD_BOT_TOKEN}",
-            "Content-Type": "application/json",
-        }
-        response = requests.post(url, headers=headers, json={"content": message}, timeout=10)
+        response = discord_api.send_channel_message(channel_id, message)
         if response.status_code in (200, 201):
             eprint(f"[notify_staff] 成功發送通知到 Discord channel {channel_id}")
             return True
