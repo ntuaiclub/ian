@@ -4,8 +4,10 @@ import pytest
 
 from ian.domain.members import (
     get_role_from_tier,
+    invalid_subscribe_platforms,
     is_valid_member,
     normalize_email,
+    normalize_personal_prompt,
     parse_subscribe_platforms,
     platform_field,
 )
@@ -81,3 +83,15 @@ def test_parse_subscribe_platforms_trims_lowercases_deduplicates_and_sorts(
     subscribe_str, expected
 ):
     assert parse_subscribe_platforms(subscribe_str) == expected
+
+
+def test_invalid_subscribe_platforms_preserves_invalid_entries_for_messages():
+    assert invalid_subscribe_platforms(" Discord, line, fb, LINE ") == [
+        "line",
+        "fb",
+        "line",
+    ]
+
+
+def test_normalize_personal_prompt_strips_and_truncates_to_limit():
+    assert normalize_personal_prompt(f"  {'a' * 101}  ") == "a" * 100

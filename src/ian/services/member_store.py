@@ -1,30 +1,28 @@
-import json
 import threading
 import time
 from datetime import datetime, timedelta
 from typing import Optional
 
-import requests
-
 from ian.config import MEMBER_API_KEY, MEMBER_API_URL, MEMBER_DB_FILE, TZ_TPE
 from ian.domain.members import (
-    PERSONAL_PROMPT_MAX_LEN,
     PLATFORM_FIELD_MAP,
     SUBSCRIBE_PLATFORM_FIELD as _SUBSCRIBE_PLATFORM_FIELD,
     VALID_SUBSCRIBE_PLATFORMS,
     get_role_from_tier,
+    invalid_subscribe_platforms,
     is_valid_member,
-    normalize_email,
+    normalize_personal_prompt,
+    parse_subscribe_platforms,
 )
+from ian.services.member_api import MemberApiError, fetch_members, update_member_fields
+from ian.services.member_cache import MemberCache
 from ian.utils.console import eprint
 
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-# In-memory member data (list of dicts)
-_member_data: list[dict] = []
-_member_lock = threading.Lock()
+_cache = MemberCache(MEMBER_DB_FILE)
 
 # ---------------------------------------------------------------------------
 # Sync from API
@@ -32,42 +30,16 @@ _member_lock = threading.Lock()
 def sync_member_data() -> bool:
     """Fetch latest member data from API and save to local file."""
     try:
-        if not MEMBER_API_URL or not MEMBER_API_KEY:
-            eprint("[MemberDB] MEMBER_API_URL or MEMBER_API_KEY is not configured")
-            return False
-
         eprint("[MemberDB] Syncing member data from API...")
-        resp = requests.get(
-            MEMBER_API_URL,
-            params={"api_key": MEMBER_API_KEY},
-            timeout=30,
-            allow_redirects=True,
-        )
-        resp.raise_for_status()
-        payload = resp.json()
-
-        if payload.get("status") != "success":
-            eprint(f"[MemberDB] API returned non-success: {payload.get('status')}")
-            return False
-
-        data = payload.get("data", [])
-        if not data:
-            eprint("[MemberDB] API returned empty data")
-            return False
-
-        # Save to local file
-        MEMBER_DB_FILE.parent.mkdir(parents=True, exist_ok=True)
-        MEMBER_DB_FILE.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
-
-        # Update in-memory cache
-        with _member_lock:
-            global _member_data
-            _member_data = data
+        data = fetch_members(MEMBER_API_URL, MEMBER_API_KEY)
+        _cache.replace_all(data)
+        _cache.save()
 
         eprint(f"[MemberDB] Synced {len(data)} members successfully")
         return True
+    except MemberApiError as e:
+        eprint(f"[MemberDB] Sync failed: {e}")
+        return False
     except Exception as e:
         eprint(f"[MemberDB] Sync failed: {e}")
         return False
@@ -75,15 +47,11 @@ def sync_member_data() -> bool:
 
 def load_member_db() -> bool:
     """Load member data from local file into memory."""
-    global _member_data
     try:
-        if not MEMBER_DB_FILE.exists():
+        data = _cache.load()
+        if data is None:
             eprint("[MemberDB] Local DB file not found, attempting sync...")
             return sync_member_data()
-
-        data = json.loads(MEMBER_DB_FILE.read_text(encoding="utf-8"))
-        with _member_lock:
-            _member_data = data
         eprint(f"[MemberDB] Loaded {len(data)} members from local file")
         return True
     except Exception as e:
@@ -99,16 +67,7 @@ def lookup_member_by_platform(platform: str, account_id: str) -> Optional[dict]:
 
     Returns the member dict if found, None otherwise.
     """
-    field = PLATFORM_FIELD_MAP.get(platform)
-    if not field or not account_id:
-        return None
-
-    with _member_lock:
-        for member in _member_data:
-            stored_id = str(member.get(field, "")).strip()
-            if stored_id and stored_id == account_id.strip():
-                return member
-    return None
+    return _cache.find_by_platform(platform, account_id)
 
 
 def _lookup_member_with_reload(platform: str, account_id: str) -> Optional[dict]:
@@ -151,13 +110,7 @@ def get_member_role(platform: str, account_id: str) -> str:
 # ---------------------------------------------------------------------------
 def find_member_by_email(email: str) -> Optional[dict]:
     """Find a member by email (case-insensitive on local part)."""
-    normalized = normalize_email(email)
-    with _member_lock:
-        for member in _member_data:
-            stored_email = normalize_email(member.get("email", ""))
-            if stored_email and stored_email == normalized:
-                return member
-    return None
+    return _cache.find_by_email(email)
 
 
 def bind_email(email: str, platform: str, account_id: str) -> dict:
@@ -210,17 +163,16 @@ def bind_email(email: str, platform: str, account_id: str) -> dict:
         }
 
     # Prevent re-binding: this account is already bound to a different email
-    with _member_lock:
-        for m in _member_data:
-            stored_id = str(m.get(field, "")).strip()
-            if stored_id and stored_id == account_id.strip():
-                return {
-                    "success": False,
-                    "message": (
-                        f"此 {platform} 帳號已綁定身分，無法一個帳號綁定多個身分。"
-                        "如需變更，請聯繫幹部協助處理。"
-                    ),
-                }
+    for m in _cache.all():
+        stored_id = str(m.get(field, "")).strip()
+        if stored_id and stored_id == account_id.strip():
+            return {
+                "success": False,
+                "message": (
+                    f"此 {platform} 帳號已綁定身分，無法一個帳號綁定多個身分。"
+                    "如需變更，請聯繫幹部協助處理。"
+                ),
+            }
 
     # Check if valid
     if not is_valid_member(member):
@@ -231,41 +183,23 @@ def bind_email(email: str, platform: str, account_id: str) -> dict:
 
     # 2. POST to API
     try:
-        payload = {
-            "api_key": MEMBER_API_KEY,
-            "email": member.get("email", ""),  # Use original email from DB
-            field: account_id,
-        }
-        resp = requests.post(
+        update_member_fields(
             MEMBER_API_URL,
-            json=payload,
-            timeout=30,
-            allow_redirects=True,
+            MEMBER_API_KEY,
+            member.get("email", ""),
+            {field: account_id},
         )
-        resp.raise_for_status()
-        result = resp.json()
-
-        if result.get("status") != "success":
-            return {
-                "success": False,
-                "message": f"API 更新失敗: {result.get('message', '未知錯誤')}",
-            }
+    except MemberApiError as e:
+        return {"success": False, "message": f"API 更新失敗: {e}"}
     except Exception as e:
         return {"success": False, "message": f"綁定時發生錯誤: {e}"}
 
     # 3. Update local cache
-    with _member_lock:
-        for m in _member_data:
-            if normalize_email(m.get("email", "")) == normalize_email(email):
-                m[field] = account_id
-                break
+    _cache.update_field(email, field, account_id)
 
     # Save updated data to local file
     try:
-        MEMBER_DB_FILE.write_text(
-            json.dumps(_member_data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        _cache.save()
     except Exception as e:
         eprint(f"[MemberDB] Failed to save local DB after binding: {e}")
 
@@ -273,12 +207,10 @@ def bind_email(email: str, platform: str, account_id: str) -> dict:
     role = get_role_from_tier(member.get("Tier", ""))
 
     # Build bound platforms summary (use updated member dict)
-    with _member_lock:
-        updated = next(
-            (m for m in _member_data if normalize_email(m.get("email", "")) == normalize_email(email)),
-            member,
-        )
-    bound_platforms = [p for p, f in PLATFORM_FIELD_MAP.items() if str(updated.get(f, "")).strip()]
+    updated = _cache.find_by_email(email) or member
+    bound_platforms = [
+        p for p, f in PLATFORM_FIELD_MAP.items() if str(updated.get(f, "")).strip()
+    ]
     bound_str = "、".join(bound_platforms) if bound_platforms else "無"
 
     return {
@@ -293,40 +225,22 @@ def bind_email(email: str, platform: str, account_id: str) -> dict:
 def _update_member_field(email: str, field: str, value: str) -> dict:
     """POST a single field update to the API and update local cache."""
     try:
-        payload = {
-            "api_key": MEMBER_API_KEY,
-            "email": email,
-            field: value,
-        }
-        resp = requests.post(
+        update_member_fields(
             MEMBER_API_URL,
-            json=payload,
-            timeout=30,
-            allow_redirects=True,
+            MEMBER_API_KEY,
+            email,
+            {field: value},
         )
-        resp.raise_for_status()
-        result = resp.json()
-
-        if result.get("status") != "success":
-            return {
-                "success": False,
-                "message": f"API 更新失敗: {result.get('message', '未知錯誤')}",
-            }
+    except MemberApiError as e:
+        return {"success": False, "message": f"API 更新失敗: {e}"}
     except Exception as e:
         return {"success": False, "message": f"更新時發生錯誤: {e}"}
 
     # Update local cache
-    with _member_lock:
-        for m in _member_data:
-            if normalize_email(m.get("email", "")) == normalize_email(email):
-                m[field] = value
-                break
+    _cache.update_field(email, field, value)
 
     try:
-        MEMBER_DB_FILE.write_text(
-            json.dumps(_member_data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        _cache.save()
     except Exception as e:
         eprint(f"[MemberDB] Failed to save local DB after update: {e}")
 
@@ -362,16 +276,14 @@ def update_subscribe(platform: str, account_id: str, subscribe_str: str) -> dict
             result["message"] = "已取消所有通知訂閱。"
         return result
 
-    raw_platforms = [p.strip().lower() for p in subscribe_str.split(",") if p.strip()]
-    invalid = [p for p in raw_platforms if p not in VALID_SUBSCRIBE_PLATFORMS]
+    invalid = invalid_subscribe_platforms(subscribe_str)
     if invalid:
         return {
             "success": False,
             "message": f"不支援的平台: {', '.join(invalid)}。目前僅支援: {', '.join(sorted(VALID_SUBSCRIBE_PLATFORMS))}",
         }
 
-    # Deduplicate
-    platforms = sorted(set(raw_platforms))
+    platforms = parse_subscribe_platforms(subscribe_str)
 
     # Check that the member has bound the requested platforms
     unbound = []
@@ -411,10 +323,7 @@ def update_personal_prompt(platform: str, account_id: str, prompt_text: str) -> 
     if not member:
         return {"success": False, "message": "找不到您的社員資料，無法更新個人備註。"}
 
-    text = prompt_text.strip()
-    if len(text) > PERSONAL_PROMPT_MAX_LEN:
-        text = text[:PERSONAL_PROMPT_MAX_LEN]
-
+    text = normalize_personal_prompt(prompt_text)
     result = _update_member_field(member.get("email", ""), "personal_prompt", text)
     if result["success"]:
         result["message"] = "已更新使用者個性備註。"
