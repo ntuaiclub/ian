@@ -13,12 +13,13 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from ian.config import GOOGLE_API_KEY
 from ian.domain.injection import INJECTION_REJECTION_MSG, detect_prompt_injection
+from ian.domain.urls import URL_PLACEHOLDER, validate_urls_in_response
 from ian.services.agent.callbacks import (
     DiscordLogCallbackHandler,
     extract_text_from_output,
 )
 from ian.services.agent.logging import add_log, eprint, start_log_processor
-from ian.services.agent.prompt import SYS_PROMPT, validate_urls_in_response
+from ian.services.agent.prompt import SYS_PROMPT
 from ian.services.agent.sessions import (
     clear_session_if_timeout,
     get_session_agent_and_channel,
@@ -36,6 +37,10 @@ def _unwrap_exception(exc: BaseException) -> BaseException:
     if isinstance(exc, BaseExceptionGroup) and len(exc.exceptions) == 1:
         return _unwrap_exception(exc.exceptions[0])
     return exc
+
+
+def _validate_agent_response_urls(response: str, tool_results: list[str]) -> str:
+    return validate_urls_in_response(response, tool_results, prompt_text=SYS_PROMPT)
 
 
 loop_agent = None
@@ -156,7 +161,7 @@ async def run_agentic_workflow():
 
                 MAX_URL_RETRIES = 2  # 最多嘗試次數（含首次）
                 MAX_INVOKE_RETRIES = 3  # ainvoke 失敗時最多重試次數（含首次）
-                FAKE_URL_PLACEHOLDER = "(連結讀取錯誤，請重新索取)"
+                FAKE_URL_PLACEHOLDER = URL_PLACEHOLDER
 
                 agent_msg = None
                 last_invoke_error = None
@@ -234,7 +239,7 @@ async def run_agentic_workflow():
                             for msg in messages:
                                 if hasattr(msg, 'type') and msg.type == 'tool':
                                     all_tool_texts.append(extract_text_from_output(msg))
-                            parsed_agent_response = validate_urls_in_response(
+                            parsed_agent_response = _validate_agent_response_urls(
                                 parsed_agent_response, all_tool_texts
                             )
 
