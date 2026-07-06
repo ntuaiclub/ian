@@ -98,33 +98,33 @@ OLD_MARKDOWN_HEADER = (
 )
 
 EXCLUDED = {
-    "COPYING",
     "uv.lock",
-    ".python-version",
 }
 
-SIDECAR_REQUIRED = {
-    "assets/ian.jpg",
-}
-
-HASH_COMMENT_SUFFIXES = {
+HEADER_COMMENT_SUFFIXES = {
     ".py",
+}
+
+HEADER_COMMENT_NAMES = {
+    "Dockerfile",
+    "Makefile",
+}
+
+CLEANUP_SUFFIXES = {
+    ".md",
     ".toml",
     ".yaml",
     ".yml",
     ".example",
 }
 
-HASH_COMMENT_NAMES = {
+CLEANUP_NAMES = {
     ".dockerignore",
     ".env.example",
     ".gitignore",
     ".pre-commit-config.yaml",
-    "Dockerfile",
-    "Makefile",
+    ".python-version",
 }
-
-MARKDOWN_SUFFIXES = {".md"}
 
 
 def tracked_files() -> list[Path]:
@@ -133,12 +133,8 @@ def tracked_files() -> list[Path]:
 
 
 def header_for(path: Path) -> str | None:
-    if path.as_posix() in SIDECAR_REQUIRED:
-        return None
-    if path.name in HASH_COMMENT_NAMES or path.suffix in HASH_COMMENT_SUFFIXES:
+    if path.name in HEADER_COMMENT_NAMES or path.suffix in HEADER_COMMENT_SUFFIXES:
         return HASH_HEADER
-    if path.suffix in MARKDOWN_SUFFIXES:
-        return MARKDOWN_HEADER
     return None
 
 
@@ -184,18 +180,24 @@ def insert_header(path: Path, header: str) -> bool:
     return True
 
 
+def cleanup_header(path: Path) -> bool:
+    if path.name not in CLEANUP_NAMES and path.suffix not in CLEANUP_SUFFIXES:
+        return False
+
+    text = path.read_text(encoding="utf-8")
+    stripped = strip_known_header(text)
+    if stripped == text:
+        return False
+
+    path.write_text(stripped, encoding="utf-8")
+    return True
+
+
 def missing_files() -> list[str]:
     missing: list[str] = []
     for path in tracked_files():
         posix = path.as_posix()
         if posix in EXCLUDED:
-            continue
-        if posix in SIDECAR_REQUIRED:
-            sidecar = Path(f"{posix}.license")
-            if not sidecar.exists() or not has_license_metadata(
-                sidecar.read_text(encoding="utf-8")
-            ):
-                missing.append(posix)
             continue
 
         header = header_for(path)
@@ -210,10 +212,12 @@ def add_headers() -> list[str]:
     changed: list[str] = []
     for path in tracked_files():
         posix = path.as_posix()
-        if posix in EXCLUDED or posix in SIDECAR_REQUIRED:
+        if posix in EXCLUDED:
             continue
         header = header_for(path)
         if header and insert_header(path, header):
+            changed.append(posix)
+        elif header is None and cleanup_header(path):
             changed.append(posix)
     return changed
 
@@ -234,7 +238,7 @@ def main() -> int:
 
     changed = add_headers()
     for path in changed:
-        print(f"added SPDX header: {path}")
+        print(f"normalized license header: {path}")
     return 0
 
 
