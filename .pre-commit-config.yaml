@@ -50,3 +50,9 @@ repos:
         entry: uv run ruff check
         language: system
         types_or: [python, pyi]
+
+      - id: license-headers
+        name: Check license headers
+        entry: uv run python scripts/add_license_headers.py --check
+        language: system
+        pass_filenames: false
