@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 NTU AI Club -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 # CONTRIBUTION.md
 
 這份文件給本專案的貢獻者參考。開始修改前，請先讀相關檔案，而不是只依賴這份摘要。

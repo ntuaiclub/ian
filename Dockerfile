@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 NTU AI Club
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 # Dockerfile
 
 FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04

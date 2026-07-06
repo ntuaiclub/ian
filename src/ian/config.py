@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 NTU AI Club
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 import os
 from datetime import timedelta, timezone
 from pathlib import Path

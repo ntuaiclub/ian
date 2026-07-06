@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 NTU AI Club
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 from ian.domain.urls import URL_PLACEHOLDER
 from ian.services.agent.runtime import _validate_agent_response_urls
 

@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 NTU AI Club -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 <p align="center">
   <img src="assets/ian.jpg" alt="NTUAI Agent cover" width="360">
 </p>

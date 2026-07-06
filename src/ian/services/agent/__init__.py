@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 NTU AI Club
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 """Agent runtime public API."""
 
 from ian.domain.urls import parse_no_response

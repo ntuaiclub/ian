@@ -1,3 +1,6 @@
+<!-- SPDX-FileCopyrightText: 2026 NTU AI Club -->
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+
 ## Summary
 
 <!-- PR title should use a prefix like [Bug]:, [Feature]:, [Docs]:, [Refactor]:, [Test]:, or [Chore]:. -->

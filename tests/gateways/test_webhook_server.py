@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2026 NTU AI Club
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 from ian.gateways import facebook_webhook, line_webhook, webhook_server
 from ian.config import MEMBER_MAPPING_FILE
 
