@@ -54,3 +54,12 @@ def normalize_email(email: str) -> str:
 def parse_subscribe_platforms(subscribe_str: str) -> list[str]:
     raw_platforms = [p.strip().lower() for p in subscribe_str.split(",") if p.strip()]
     return sorted(set(raw_platforms))
+
+
+def invalid_subscribe_platforms(subscribe_str: str) -> list[str]:
+    raw_platforms = [p.strip().lower() for p in subscribe_str.split(",") if p.strip()]
+    return [p for p in raw_platforms if p not in VALID_SUBSCRIBE_PLATFORMS]
+
+
+def normalize_personal_prompt(prompt_text: str) -> str:
+    return prompt_text.strip()[:PERSONAL_PROMPT_MAX_LEN]
