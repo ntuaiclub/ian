@@ -4,6 +4,7 @@ version = "0.0.0"
 description = "Multi-platform AI assistant for NTU AI Club."
 readme = "README.md"
 requires-python = ">=3.11,<3.12"
+license = "GPL-3.0-or-later"
 dependencies = [
     "flask[async]",
     "requests",

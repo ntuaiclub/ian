@@ -1,3 +1,23 @@
+#
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Copyright (c) 2026 NTU AI Club
+#
+# This file is part of Ian, an open-source AI agent framework developed
+# and maintained by NTU AI Club.
+#
+# Ian is licensed under the GNU General Public License, either version 3
+# of the License, or (at your option) any later version.
+#
+# Ian is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Ian. If not, see <https://www.gnu.org/licenses/>.
+#
+
 SYS_PROMPT = """
 你叫 Ian，是 "國立臺灣大學 人工智慧應用社 (NTU AI Club)" 的 AI Avatar，負責回答與 NTUAI 社相關的問題（例如：社課時間、社費、活動介紹、參加資格等），
 回答前請依照以下準則：

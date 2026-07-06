@@ -16,4 +16,5 @@
 
 ## License
 
-This project is for NTU AI Club internal use.
+This project is licensed under the GNU General Public License v3.0 or later.
+See [COPYING](COPYING) for the full license text.
