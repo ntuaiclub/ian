@@ -31,21 +31,69 @@ from ian.domain.reminders import (
 )
 
 
-def test_get_valid_bound_members_filters_expired_and_unsubscribed_members():
-    future = datetime.now(timezone(timedelta(hours=8))) + timedelta(days=1)
-    past = datetime.now(timezone(timedelta(hours=8))) - timedelta(days=1)
+def _event(**overrides):
+    event = {
+        "date": "2026/03/07",
+        "weekday": "六",
+        "time": "19:00",
+        "venue": "新生",
+        "title": "Demo",
+        "speaker": "講者",
+        "outline": "大綱",
+        "target": "社員",
+        "livestream": "Y",
+        "recording": "N",
+        "online_link": "https://meet.example",
+        "slides": "",
+    }
+    event.update(overrides)
+    return event
+
+
+def test_get_valid_bound_members_filters_expired_unsubscribed_and_unbound_members():
+    now = datetime(2026, 3, 7, 12, 0, tzinfo=timezone(timedelta(hours=8)))
+    future = now + timedelta(days=1)
+    past = now - timedelta(days=1)
     members = [
-        {"valid_date": future.isoformat(), "subscribe": "discord", "discord_acc_id": "123", "name": "A"},
-        {"valid_date": past.isoformat(), "subscribe": "discord", "discord_acc_id": "456", "name": "B"},
-        {"valid_date": future.isoformat(), "subscribe": "", "discord_acc_id": "789", "name": "C"},
+        {
+            "valid_date": future.isoformat(),
+            "subscribe": "discord",
+            "discord_acc_id": "123",
+            "name": "Subscribed",
+            "email": "subscribed@example.com",
+            "Tier": "VIP",
+        },
+        {
+            "valid_date": past.isoformat(),
+            "subscribe": "discord",
+            "discord_acc_id": "456",
+            "name": "Expired",
+        },
+        {
+            "valid_date": future.isoformat(),
+            "subscribe": "",
+            "discord_acc_id": "789",
+            "name": "Unsubscribed",
+        },
+        {
+            "valid_date": future.isoformat(),
+            "subscribe": "discord",
+            "discord_acc_id": "0",
+            "name": "Unbound",
+        },
     ]
 
-    assert get_valid_bound_members(members) == [
-        {"name": "A", "email": "", "tier": "", "discord_id": "123"}
+    assert get_valid_bound_members(members, now=now) == [
+        {
+            "name": "Subscribed",
+            "email": "subscribed@example.com",
+            "tier": "VIP",
+            "discord_id": "123",
+        }
     ]
 
 
-def test_find_events_on_date_cleans_empty_values():
+def test_find_events_on_date_matches_only_target_date_and_cleans_empty_values():
     df = pd.DataFrame(
         [
             {"時間": "2026/03/07", "星期": "六", "活動時間": "-", "場地": "無", "社課主題 / 活動名稱": "Demo"},
@@ -54,35 +102,72 @@ def test_find_events_on_date_cleans_empty_values():
     )
 
     events = find_events_on_date(df, "2026/03/07")
+    assert len(events) == 1
     assert events[0]["title"] == "Demo"
+    assert events[0]["date"] == "2026/03/07"
     assert events[0]["time"] == ""
     assert events[0]["venue"] == ""
     assert clean_value(float("nan")) == ""
 
 
-def test_format_reminder_message_includes_event_details():
+def test_format_reminder_message_includes_single_event_details():
+    message = format_reminder_message([_event()])
+
+    assert "Hi! 明天 NTUAI 有以下活動：" in message
+    assert "=== Demo ===" in message
+    assert "日期: 2026/03/07 六" in message
+    assert "時間: 19:00" in message
+    assert "地點: 新生" in message
+    assert "講者: 講者" in message
+    assert "對象: 社員" in message
+    assert "線上直播" in message
+    assert "提供錄影" not in message
+    assert "課程大綱:\n大綱" in message
+    assert "https://meet.example" in message
+
+
+def test_format_reminder_message_numbers_multiple_events_and_combines_flags():
     message = format_reminder_message(
         [
-            {
-                "date": "2026/03/07",
-                "weekday": "六",
-                "time": "19:00",
-                "venue": "新生",
-                "title": "Demo",
-                "speaker": "講者",
-                "outline": "大綱",
-                "target": "社員",
-                "livestream": "Y",
-                "recording": "N",
-                "online_link": "https://meet.example",
-                "slides": "",
-            }
+            _event(title="社課 A", livestream="N", recording="Y"),
+            _event(title="社課 B", time="20:00", livestream="Y", recording="Y"),
         ]
     )
-    assert "Hi! 明天 NTUAI 有以下活動：" in message
-    assert "Demo" in message
-    assert "線上直播" in message
-    assert "https://meet.example" in message
+
+    assert "=== [1] 社課 A ===" in message
+    assert "=== [2] 社課 B ===" in message
+    assert "時間: 20:00" in message
+    assert "備註: 提供錄影" in message
+    assert "備註: 線上直播 / 提供錄影" in message
+
+
+def test_format_reminder_message_omits_empty_optional_event_fields():
+    message = format_reminder_message(
+        [
+            _event(
+                time="",
+                venue="",
+                speaker="",
+                outline="",
+                target="",
+                livestream="N",
+                recording="N",
+                online_link="",
+                slides="",
+            )
+        ]
+    )
+
+    assert "=== Demo ===" in message
+    assert "日期: 2026/03/07 六" in message
+    assert "時間:" not in message
+    assert "地點:" not in message
+    assert "講者:" not in message
+    assert "對象:" not in message
+    assert "備註:" not in message
+    assert "課程大綱:" not in message
+    assert "線上連結:" not in message
+    assert "講義:" not in message
 
 
 def test_seconds_until_next_run_returns_next_future_target():
