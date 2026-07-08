@@ -22,6 +22,7 @@ import pandas as pd
 
 from ian.domain.courses import (
     MEMBER_ONLY_FIELDS,
+    clean_value,
     format_course_data,
     get_column_mapping,
     normalize_date,
@@ -32,6 +33,18 @@ from ian.domain.courses import (
 def test_parse_dates_from_query_normalizes_full_dates():
     assert parse_dates_from_query("請查 2026-3-7 的社課") == ["2026/03/07"]
     assert normalize_date(2026, 3, 7) == "2026/03/07"
+
+
+def test_parse_dates_from_query_uses_current_year_for_short_dates():
+    assert parse_dates_from_query("3/7", current_year=2026) == ["2026/03/07"]
+    assert parse_dates_from_query("03-07", current_year=2026) == ["2026/03/07"]
+
+
+def test_clean_value_removes_empty_and_placeholder_values():
+    assert clean_value(float("nan")) == ""
+    assert clean_value(" - ") == ""
+    assert clean_value("無") == ""
+    assert clean_value(" 生成式 AI ") == "生成式 AI"
 
 
 def test_get_column_mapping_repairs_encoded_column_by_position():
@@ -60,3 +73,24 @@ def test_format_course_data_hides_member_only_fields_for_non_members():
     assert all(field not in public_text for field in MEMBER_ONLY_FIELDS)
     assert "線上連結: https://meet.example" in member_text
     assert "課程講義: (尚未上傳)" in member_text
+
+
+def test_format_course_data_cleans_empty_and_placeholder_values():
+    df = pd.DataFrame(
+        [
+            {
+                "時間": "2026/03/07",
+                "社課主題/活動名稱": "生成式 AI",
+                "場地": "-",
+                "講者": "無",
+                "課程講義": "-",
+            }
+        ]
+    )
+
+    text = format_course_data(df, has_permission=True)
+
+    assert "社課主題/活動名稱: 生成式 AI" in text
+    assert "場地:" not in text
+    assert "講者:" not in text
+    assert "課程講義: (尚未上傳)" in text
