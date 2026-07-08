@@ -110,9 +110,9 @@ def format_course_data(df: pd.DataFrame, has_permission: bool) -> str:
     for index, row in df.iterrows():
         course_info = []
         for col in df.columns:
-            value = row[col]
+            value = clean_value(row[col])
             friendly_col_name = column_mapping.get(col, str(col))
-            has_value = pd.notna(value) and str(value).strip()
+            has_value = bool(value)
 
             if has_value:
                 if not has_permission and friendly_col_name in MEMBER_ONLY_FIELDS:
