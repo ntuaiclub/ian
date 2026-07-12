@@ -21,6 +21,7 @@
 from datetime import datetime, timedelta, timezone
 
 import pandas as pd
+import pytest
 
 from ian.domain.reminders import (
     clean_value,
@@ -170,6 +171,33 @@ def test_format_reminder_message_omits_empty_optional_event_fields():
     assert "講義:" not in message
 
 
-def test_seconds_until_next_run_returns_next_future_target():
-    now = datetime(2026, 3, 7, 20, 0, tzinfo=timezone(timedelta(hours=8)))
-    assert seconds_until_next_run(now, hour=19, minute=0) == 23 * 60 * 60
+def test_format_reminder_message_includes_slides_when_present():
+    message = format_reminder_message(
+        [_event(slides="https://slides.example/course")]
+    )
+
+    assert "講義: https://slides.example/course" in message
+
+
+@pytest.mark.parametrize(
+    ("hour", "minute", "second", "expected"),
+    [
+        pytest.param(18, 59, 30, 30, id="before-target"),
+        pytest.param(19, 0, 0, 24 * 60 * 60, id="exact-target"),
+        pytest.param(20, 0, 0, 23 * 60 * 60, id="after-target"),
+    ],
+)
+def test_seconds_until_next_run_handles_target_boundaries(
+    hour, minute, second, expected
+):
+    now = datetime(
+        2026,
+        3,
+        7,
+        hour,
+        minute,
+        second,
+        tzinfo=timezone(timedelta(hours=8)),
+    )
+
+    assert seconds_until_next_run(now, hour=19, minute=0) == expected

@@ -18,7 +18,10 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
+from datetime import datetime, timezone, timedelta
+
 import pandas as pd
+import pytest
 
 from ian.services import reminder_runner
 
@@ -31,6 +34,14 @@ EVENTS = [
     }
 ]
 MESSAGE = "Hi! 明天 NTUAI 有 Agent Evaluation"
+
+
+def _stub_event_flow(monkeypatch, bound):
+    monkeypatch.setattr(reminder_runner, "fetch_course_data", pd.DataFrame)
+    monkeypatch.setattr(reminder_runner, "find_events_on_date", lambda *_: EVENTS)
+    monkeypatch.setattr(reminder_runner, "format_reminder_message", lambda *_: MESSAGE)
+    monkeypatch.setattr(reminder_runner, "load_members", list)
+    monkeypatch.setattr(reminder_runner, "get_valid_bound_members", lambda *_: bound)
 
 
 def test_run_once_logs_fetch_failure_without_loading_members(monkeypatch):
@@ -113,7 +124,6 @@ def test_run_once_dry_run_lists_recipients_without_sending_messages(
 
 
 def test_run_once_sends_personalized_messages_and_reports_counts(monkeypatch):
-    members = [{"source": "fixture"}]
     bound = [
         {
             "name": "王 小明",
@@ -134,11 +144,7 @@ def test_run_once_sends_personalized_messages_and_reports_counts(monkeypatch):
         dm_calls.append((discord_id, message))
         return discord_id == "discord-success"
 
-    monkeypatch.setattr(reminder_runner, "fetch_course_data", pd.DataFrame)
-    monkeypatch.setattr(reminder_runner, "find_events_on_date", lambda *_: EVENTS)
-    monkeypatch.setattr(reminder_runner, "format_reminder_message", lambda *_: MESSAGE)
-    monkeypatch.setattr(reminder_runner, "load_members", lambda: members)
-    monkeypatch.setattr(reminder_runner, "get_valid_bound_members", lambda value: bound)
+    _stub_event_flow(monkeypatch, bound)
     monkeypatch.setattr(reminder_runner, "send_discord_dm", send_dm)
     monkeypatch.setattr(reminder_runner, "send_log", log_calls.append)
     monkeypatch.setattr(reminder_runner.time, "sleep", sleep_calls.append)
@@ -162,3 +168,120 @@ def test_run_once_sends_personalized_messages_and_reports_counts(monkeypatch):
     assert f"Events on {TARGET_DATE}: Agent Evaluation" in log_calls[0]
     assert "Discord: 1 sent, 1 failed" in log_calls[0]
     assert "Total members notified: 1" in log_calls[0]
+
+
+def test_run_once_logs_member_load_failure_without_sending_messages(monkeypatch):
+    logs = []
+
+    monkeypatch.setattr(reminder_runner, "fetch_course_data", pd.DataFrame)
+    monkeypatch.setattr(reminder_runner, "find_events_on_date", lambda *_: EVENTS)
+    monkeypatch.setattr(reminder_runner, "format_reminder_message", lambda *_: MESSAGE)
+    monkeypatch.setattr(
+        reminder_runner,
+        "load_members",
+        lambda: (_ for _ in ()).throw(ValueError("invalid member JSON")),
+    )
+    monkeypatch.setattr(
+        reminder_runner,
+        "send_discord_dm",
+        lambda *_: (_ for _ in ()).throw(AssertionError("DM should not be sent")),
+    )
+    monkeypatch.setattr(reminder_runner, "send_log", logs.append)
+
+    reminder_runner.run_once(target_date=TARGET_DATE)
+
+    assert logs == [
+        "```\n[REMINDER] FAILED to load member data: invalid member JSON\n```"
+    ]
+
+
+def test_run_once_continues_after_one_dm_raises(monkeypatch):
+    bound = [
+        {"name": "Alice", "email": "alice@example.test", "discord_id": "bad"},
+        {"name": "Bob", "email": "bob@example.test", "discord_id": "good"},
+    ]
+    attempted = []
+    logs = []
+
+    def send_dm(discord_id, _message):
+        attempted.append(discord_id)
+        if discord_id == "bad":
+            raise TimeoutError("Discord timeout")
+        return True
+
+    _stub_event_flow(monkeypatch, bound)
+    monkeypatch.setattr(reminder_runner, "send_discord_dm", send_dm)
+    monkeypatch.setattr(reminder_runner, "send_log", logs.append)
+    monkeypatch.setattr(reminder_runner.time, "sleep", lambda *_: None)
+
+    reminder_runner.run_once(target_date=TARGET_DATE)
+
+    assert attempted == ["bad", "good"]
+    assert "Discord: 1 sent, 1 failed" in logs[0]
+
+
+def test_run_once_with_no_recipients_reports_zero_counts(monkeypatch):
+    logs = []
+
+    _stub_event_flow(monkeypatch, [])
+    monkeypatch.setattr(
+        reminder_runner,
+        "send_discord_dm",
+        lambda *_: (_ for _ in ()).throw(AssertionError("DM should not be sent")),
+    )
+    monkeypatch.setattr(reminder_runner, "send_log", logs.append)
+
+    reminder_runner.run_once(target_date=TARGET_DATE)
+
+    assert "Discord: 0 sent, 0 failed" in logs[0]
+    assert "Total members notified: 0" in logs[0]
+
+
+@pytest.mark.parametrize(
+    ("name", "email"),
+    [
+        pytest.param("Alice", "", id="missing-email"),
+        pytest.param("", "alice@example.test", id="missing-name"),
+        pytest.param("", "", id="missing-name-and-email"),
+    ],
+)
+def test_run_once_omits_checkin_link_without_complete_identity(
+    monkeypatch, name, email
+):
+    bound = [{"name": name, "email": email, "discord_id": "discord-1"}]
+    messages = []
+
+    _stub_event_flow(monkeypatch, bound)
+    monkeypatch.setattr(
+        reminder_runner,
+        "send_discord_dm",
+        lambda _discord_id, message: messages.append(message) or True,
+    )
+    monkeypatch.setattr(reminder_runner, "send_log", lambda *_: None)
+    monkeypatch.setattr(reminder_runner.time, "sleep", lambda *_: None)
+
+    reminder_runner.run_once(target_date=TARGET_DATE)
+
+    assert messages == [MESSAGE]
+
+
+def test_run_once_uses_taipei_tomorrow_when_target_date_is_omitted(monkeypatch):
+    checked_dates = []
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 12, 31, 23, 30, tzinfo=timezone(timedelta(hours=8)))
+
+    monkeypatch.setattr(reminder_runner, "datetime", FixedDateTime)
+    monkeypatch.setattr(reminder_runner, "fetch_course_data", pd.DataFrame)
+    monkeypatch.setattr(
+        reminder_runner,
+        "find_events_on_date",
+        lambda _df, target_date: checked_dates.append(target_date) or [],
+    )
+    monkeypatch.setattr(reminder_runner, "send_log", lambda *_: None)
+
+    reminder_runner.run_once()
+
+    assert checked_dates == ["2027/01/01"]
