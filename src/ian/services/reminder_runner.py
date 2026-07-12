@@ -89,17 +89,21 @@ def run_once(target_date: str | None = None, dry: bool = False):
     message = format_reminder_message(events)
     eprint(f"\n[Reminder] Message:\n{message}\n")
 
-    if dry:
-        eprint("[Reminder] DRY RUN — no messages sent.")
+    try:
         members = load_members()
         bound = get_valid_bound_members(members)
+    except Exception as e:
+        eprint(f"[Reminder] Failed to load member data: {e}")
+        send_log(f"```\n[REMINDER] FAILED to load member data: {e}\n```")
+        return
+
+    if dry:
+        eprint("[Reminder] DRY RUN — no messages sent.")
         eprint(f"[Reminder] Would notify {len(bound)} member(s):")
         for m in bound:
             eprint(f"  - {m['name']} (Discord)")
         return
 
-    members = load_members()
-    bound = get_valid_bound_members(members)
     eprint(f"[Reminder] Notifying {len(bound)} member(s)...")
 
     discord_ok, discord_fail = 0, 0
@@ -115,11 +119,15 @@ def run_once(target_date: str | None = None, dry: bool = False):
 
         if m["discord_id"]:
             eprint(f"  Sending Discord DM to {name}...")
-            if send_discord_dm(m["discord_id"], personal_message):
-                discord_ok += 1
-                eprint(f"  [Discord] {name} OK")
-            else:
+            try:
+                if send_discord_dm(m["discord_id"], personal_message):
+                    discord_ok += 1
+                    eprint(f"  [Discord] {name} OK")
+                else:
+                    discord_fail += 1
+            except Exception as e:
                 discord_fail += 1
+                eprint(f"  [Discord] {name} failed: {e}")
             time.sleep(0.5)
 
     event_titles = ", ".join(ev["title"] for ev in events)
