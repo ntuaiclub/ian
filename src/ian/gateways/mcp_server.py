@@ -85,18 +85,19 @@ def check_user_permission(
         return True, role
     return False, role
 
-try:
-    rag.initialize_rag_system()
-    course_catalog.load_course_data_from_url(COURSE_DATA_URL)
-except Exception as e:
-    eprint(f"初始化錯誤: {e}")
+def initialize_dependencies() -> None:
+    """Initialize external data sources when the MCP server starts."""
+    try:
+        rag.initialize_rag_system()
+        course_catalog.load_course_data_from_url(COURSE_DATA_URL)
+    except Exception as e:
+        eprint(f"初始化錯誤: {e}")
 
-# Initialize member database
-try:
-    init_member_db()
-    eprint("社員資料庫已初始化")
-except Exception as e:
-    eprint(f"社員資料庫初始化失敗: {e}")
+    try:
+        init_member_db()
+        eprint("社員資料庫已初始化")
+    except Exception as e:
+        eprint(f"社員資料庫初始化失敗: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -564,6 +565,8 @@ async def notify_members(role: str, event_date: str = "", note: str = "", custom
 
 
 def entrypoint(http: bool = False, host: str = "0.0.0.0", port: int = 5191):
+    initialize_dependencies()
+
     if http:
         # Use FastMCP's built-in streamable-http transport (stateless mode)
         # This avoids the SSE session leak in mcp/server/sse.py where
