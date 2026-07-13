@@ -18,6 +18,7 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -100,6 +101,59 @@ def test_send_notification_to_members_aggregates_delivery_results(
 
 
 @pytest.mark.parametrize(
+    ("create_status", "send_status", "expected", "expected_stage"),
+    [
+        pytest.param(500, None, False, "create_channel", id="create-channel-failure"),
+        pytest.param(200, 500, False, "send_message", id="send-message-failure"),
+        pytest.param(200, 200, True, "send_message", id="success"),
+    ],
+)
+def test_send_discord_dm_emits_redacted_delivery_result(
+    monkeypatch,
+    capsys,
+    create_status,
+    send_status,
+    expected,
+    expected_stage,
+):
+    send_calls = []
+    monkeypatch.setattr(
+        notifications.discord_api,
+        "create_dm_channel",
+        lambda _user_id: SimpleNamespace(
+            status_code=create_status,
+            text="private create response",
+            json=lambda: {"id": "dm-channel-1"},
+        ),
+    )
+    monkeypatch.setattr(
+        notifications.discord_api,
+        "send_channel_message",
+        lambda channel_id, message: send_calls.append((channel_id, message))
+        or SimpleNamespace(status_code=send_status, text="private send response"),
+    )
+
+    result = notifications.send_discord_dm("user-1", "private message")
+
+    assert result is expected
+    assert send_calls == (
+        [] if send_status is None else [("dm-channel-1", "private message")]
+    )
+    log_entry = json.loads(capsys.readouterr().err)
+    assert log_entry["status"] == ("success" if expected else "failure")
+    assert log_entry["stage"] == expected_stage
+    serialized = json.dumps(log_entry)
+    for sensitive in (
+        "user-1",
+        "dm-channel-1",
+        "private message",
+        "private create response",
+        "private send response",
+    ):
+        assert sensitive not in serialized
+
+
+@pytest.mark.parametrize(
     ("status_code", "expected"),
     [
         pytest.param(200, True, id="ok"),
@@ -109,7 +163,7 @@ def test_send_notification_to_members_aggregates_delivery_results(
     ],
 )
 def test_send_discord_channel_message_handles_response_statuses(
-    monkeypatch, status_code, expected
+    monkeypatch, capsys, status_code, expected
 ):
     calls = []
     monkeypatch.setattr(
@@ -121,15 +175,25 @@ def test_send_discord_channel_message_handles_response_statuses(
 
     assert notifications.send_discord_channel_message("channel-1", "Notice") is expected
     assert calls == [("channel-1", "Notice")]
+    log_entry = json.loads(capsys.readouterr().err)
+    assert log_entry["status"] == ("success" if expected else "failure")
+    assert log_entry["http_status"] == status_code
+    assert "channel-1" not in json.dumps(log_entry)
+    assert "response body" not in json.dumps(log_entry)
 
 
-def test_send_discord_channel_message_handles_api_exception(monkeypatch):
+def test_send_discord_channel_message_handles_api_exception(monkeypatch, capsys):
     def fail(*_args):
         raise RuntimeError("Discord unavailable")
 
     monkeypatch.setattr(notifications.discord_api, "send_channel_message", fail)
 
     assert notifications.send_discord_channel_message("channel-1", "Notice") is False
+    log_entry = json.loads(capsys.readouterr().err)
+    assert log_entry["level"] == "error"
+    assert log_entry["status"] == "error"
+    assert log_entry["error_type"] == "RuntimeError"
+    assert "Discord unavailable" not in json.dumps(log_entry)
 
 
 @pytest.mark.parametrize(

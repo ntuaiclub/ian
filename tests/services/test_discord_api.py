@@ -18,6 +18,8 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
+import json
+
 from ian.services import notifications
 from ian.services.agent import logging as agent_logging
 
@@ -88,7 +90,7 @@ def test_send_channel_message_posts_content_with_bot_headers(monkeypatch):
     ]
 
 
-def test_send_discord_dm_uses_shared_client_and_preserves_failure_message(
+def test_send_discord_dm_uses_shared_client_and_redacts_failure_details(
     monkeypatch, capsys
 ):
     from ian.services import discord_api
@@ -101,8 +103,13 @@ def test_send_discord_dm_uses_shared_client_and_preserves_failure_message(
 
     assert notifications.send_discord_dm("user-1", "hello") is False
 
-    captured = capsys.readouterr()
-    assert "Failed to create DM channel for user-1: cannot create" in captured.err
+    log_entry = json.loads(capsys.readouterr().err)
+    assert log_entry["event"] == "discord_dm_delivery"
+    assert log_entry["status"] == "failure"
+    assert log_entry["stage"] == "create_channel"
+    assert log_entry["user_id"].startswith("sha256:")
+    assert "user-1" not in json.dumps(log_entry)
+    assert "cannot create" not in json.dumps(log_entry)
 
 
 def test_send_discord_channel_message_uses_shared_client_for_success(monkeypatch, capsys):
@@ -120,7 +127,11 @@ def test_send_discord_channel_message_uses_shared_client_for_success(monkeypatch
     assert calls == [("channel-1", "hello")]
 
     captured = capsys.readouterr()
-    assert "成功發送通知到 Discord channel channel-1" in captured.err
+    log_entry = json.loads(captured.err)
+    assert log_entry["event"] == "discord_channel_message"
+    assert log_entry["status"] == "success"
+    assert log_entry["channel_id"].startswith("sha256:")
+    assert "channel-1" not in captured.err
 
 
 def test_agent_logging_uses_shared_client_for_failure(monkeypatch, capsys):
