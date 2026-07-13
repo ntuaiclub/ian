@@ -92,6 +92,29 @@ def test_webhook_status_reports_enabled_platforms():
     finally:
         webhook_server.configure_platforms("all")
 
+
+def test_entrypoint_initializes_dependencies_before_starting_server(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        webhook_server,
+        "initialize_dependencies",
+        lambda: calls.append(("initialize",)),
+    )
+    monkeypatch.setattr(
+        webhook_server.app,
+        "run",
+        lambda **kwargs: calls.append(("run", kwargs)),
+    )
+
+    webhook_server.entrypoint("line")
+
+    assert calls == [
+        ("initialize",),
+        ("run", {"host": "0.0.0.0", "port": 5190, "debug": False}),
+    ]
+    webhook_server.configure_platforms("all")
+
+
 def test_facebook_member_mapping_path_comes_from_config():
     assert facebook_webhook.MAPPING_FILE_PATH == MEMBER_MAPPING_FILE
     assert MEMBER_MAPPING_FILE.name == "member_mapping.csv"

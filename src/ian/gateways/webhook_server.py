@@ -47,12 +47,13 @@ def configure_platforms(platform: str = "all") -> set[str]:
     ENABLED_WEBHOOK_PLATFORMS = selected.copy()
     return ENABLED_WEBHOOK_PLATFORMS
 
-# Initialize member database
-try:
-    init_member_db()
-    eprint("社員資料庫已初始化 (webhook_server)")
-except Exception as e:
-    eprint(f"社員資料庫初始化失敗: {e}")
+def initialize_dependencies() -> None:
+    """Initialize external member data when the webhook server starts."""
+    try:
+        init_member_db()
+        eprint("社員資料庫已初始化 (webhook_server)")
+    except Exception as e:
+        eprint(f"社員資料庫初始化失敗: {e}")
 
 
 @app.route('/', methods=['GET'])
@@ -107,6 +108,7 @@ def status():
     }, 200
 
 def entrypoint(platform: str = "all"):
+    initialize_dependencies()
     enabled = configure_platforms(platform)
     print(f"啟動 Flask 伺服器... platforms={', '.join(sorted(enabled))}")
     app.run(host='0.0.0.0', port=5190, debug=False)
