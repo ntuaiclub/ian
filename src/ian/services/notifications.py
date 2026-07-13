@@ -23,7 +23,7 @@ import time
 from ian.config import DISCORD_BOT_TOKEN, DISCORD_LOG_CHANNEL_ID
 from ian.domain.reminders import get_valid_bound_members
 from ian.services import discord_api
-from ian.utils.console import eprint
+from ian.utils.logging import log_event
 
 
 LOG_CHANNEL_ID = DISCORD_LOG_CHANNEL_ID
@@ -33,14 +33,43 @@ STAFF_ROLE_KEYWORDS = ("社長", "部長", "部員")
 def send_discord_dm(user_id: str, text: str) -> bool:
     response = discord_api.create_dm_channel(user_id)
     if response.status_code != 200:
-        eprint(f"  [Discord] Failed to create DM channel for {user_id}: {response.text}")
+        log_event(
+            "discord_dm_delivery",
+            "notifications",
+            level="warning",
+            platform="Discord",
+            status="failure",
+            stage="create_channel",
+            user_id=user_id,
+            http_status=response.status_code,
+        )
         return False
 
     dm_channel_id = response.json()["id"]
     message_response = discord_api.send_channel_message(dm_channel_id, text)
     if message_response.status_code != 200:
-        eprint(f"  [Discord] Failed to send message to {user_id}: {message_response.text}")
+        log_event(
+            "discord_dm_delivery",
+            "notifications",
+            level="warning",
+            platform="Discord",
+            status="failure",
+            stage="send_message",
+            user_id=user_id,
+            channel_id=dm_channel_id,
+            http_status=message_response.status_code,
+        )
         return False
+    log_event(
+        "discord_dm_delivery",
+        "notifications",
+        platform="Discord",
+        status="success",
+        stage="send_message",
+        user_id=user_id,
+        channel_id=dm_channel_id,
+        http_status=message_response.status_code,
+    )
     return True
 
 
@@ -57,12 +86,35 @@ def send_discord_channel_message(channel_id: str, message: str) -> bool:
     try:
         response = discord_api.send_channel_message(channel_id, message)
         if response.status_code in (200, 201):
-            eprint(f"[notify_staff] 成功發送通知到 Discord channel {channel_id}")
+            log_event(
+                "discord_channel_message",
+                "notifications",
+                platform="Discord",
+                status="success",
+                channel_id=channel_id,
+                http_status=response.status_code,
+            )
             return True
-        eprint(f"[notify_staff] 發送失敗: {response.status_code} - {response.text}")
+        log_event(
+            "discord_channel_message",
+            "notifications",
+            level="warning",
+            platform="Discord",
+            status="failure",
+            channel_id=channel_id,
+            http_status=response.status_code,
+        )
         return False
     except Exception as e:
-        eprint(f"[notify_staff] 發送通知時發生錯誤: {e}")
+        log_event(
+            "discord_channel_message",
+            "notifications",
+            level="error",
+            platform="Discord",
+            status="error",
+            channel_id=channel_id,
+            error=e,
+        )
         return False
 
 
