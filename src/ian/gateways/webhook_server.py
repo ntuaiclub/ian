@@ -25,7 +25,7 @@ from ian.config import FB_VERIFY_TOKEN
 from ian.gateways import facebook_webhook, line_webhook
 from ian.gateways.messaging_common import get_current_time
 from ian.services.member_store import init as init_member_db
-from ian.utils.console import eprint
+from ian.utils.logging import log_event
 
 app = Flask(__name__)
 
@@ -51,9 +51,21 @@ def initialize_dependencies() -> None:
     """Initialize external member data when the webhook server starts."""
     try:
         init_member_db()
-        eprint("社員資料庫已初始化 (webhook_server)")
+        log_event(
+            "operation_completed",
+            "webhook_server",
+            status="success",
+            operation="initialize_member_store",
+        )
     except Exception as e:
-        eprint(f"社員資料庫初始化失敗: {e}")
+        log_event(
+            "operation_failed",
+            "webhook_server",
+            level="error",
+            status="error",
+            operation="initialize_member_store",
+            error=e,
+        )
 
 
 @app.route('/', methods=['GET'])
@@ -75,7 +87,15 @@ async def webhook():
         if data.get('object') == 'page':
             facebook_webhook.handle_facebook_messages(data)
     except Exception as e:
-        print(f"Webhook 處理過程中發生未知錯誤: {e}")
+        log_event(
+            "request_failed",
+            "webhook_server",
+            level="error",
+            platform="Facebook",
+            status="error",
+            operation="handle_webhook",
+            error=e,
+        )
     return "ok", 200
 
 
@@ -91,10 +111,25 @@ def line_callback():
     try:
         line_webhook.line_handler.handle(body, signature)
     except InvalidSignatureError:
-        eprint("LINE: Invalid signature")
+        log_event(
+            "request_rejected",
+            "webhook_server",
+            level="warning",
+            platform="LINE",
+            status="invalid_signature",
+            reason="signature_verification_failed",
+        )
         abort(400)
     except Exception as e:
-        eprint(f"LINE CALLBACK: handler.handle() 發生例外: {e}")
+        log_event(
+            "request_failed",
+            "webhook_server",
+            level="error",
+            platform="LINE",
+            status="error",
+            operation="handle_webhook",
+            error=e,
+        )
 
     return "OK", 200
 
@@ -110,5 +145,13 @@ def status():
 def entrypoint(platform: str = "all"):
     initialize_dependencies()
     enabled = configure_platforms(platform)
-    print(f"啟動 Flask 伺服器... platforms={', '.join(sorted(enabled))}")
+    log_event(
+        "service_started",
+        "webhook_server",
+        status="running",
+        service="webhook_server",
+        host="0.0.0.0",
+        port=5190,
+        enabled_platforms=sorted(enabled),
+    )
     app.run(host='0.0.0.0', port=5190, debug=False)

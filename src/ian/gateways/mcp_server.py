@@ -45,7 +45,7 @@ from ian.services.member_store import (
     update_personal_prompt as _update_personal_prompt,
     update_subscribe as _update_subscribe,
 )
-from ian.utils.console import eprint
+from ian.utils.logging import log_event
 
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 
@@ -91,13 +91,51 @@ def initialize_dependencies() -> None:
         rag.initialize_rag_system()
         course_catalog.load_course_data_from_url(COURSE_DATA_URL)
     except Exception as e:
-        eprint(f"初始化錯誤: {e}")
+        log_event(
+            "operation_failed",
+            "mcp_server",
+            level="error",
+            status="error",
+            operation="initialize_data_sources",
+            error=e,
+        )
 
     try:
         init_member_db()
-        eprint("社員資料庫已初始化")
+        log_event(
+            "operation_completed",
+            "mcp_server",
+            status="success",
+            operation="initialize_member_store",
+        )
     except Exception as e:
-        eprint(f"社員資料庫初始化失敗: {e}")
+        log_event(
+            "operation_failed",
+            "mcp_server",
+            level="error",
+            status="error",
+            operation="initialize_member_store",
+            error=e,
+        )
+
+
+def _log_mcp_tool_failure(
+    operation: str,
+    error: Exception,
+    *,
+    platform: str | None = None,
+    account_id: str | None = None,
+) -> None:
+    log_event(
+        "operation_failed",
+        "mcp_server",
+        level="error",
+        platform=platform,
+        status="error",
+        operation=operation,
+        account_id=account_id,
+        error=error,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -135,14 +173,19 @@ async def search_course_chunks_by_semantics(
         )
 
         # 權限檢查 — 角色一律從綁定 DB 查，不採信 LLM 傳進來的字串
-        has_permission, resolved_role = await asyncio.to_thread(
+        has_permission, _ = await asyncio.to_thread(
             check_user_permission, platform, account_id, channel_id
         )
-        access_level = "完整權限" if has_permission else "受限權限"
-        eprint(
-            f"課程資料查詢 - 平台: {platform}, 帳號: {account_id}, "
-            f"DB 角色: {resolved_role}, 頻道 ID: {channel_id}, "
-            f"權限: {access_level}, 查詢: {query}"
+        log_event(
+            "tool_invoked",
+            "mcp_server",
+            platform=platform,
+            status="started",
+            operation="course_retriever",
+            account_id=account_id,
+            channel_id=channel_id,
+            has_permission=has_permission,
+            query_length=len(query),
         )
 
         # 檢查是否有查詢條件
@@ -274,7 +317,7 @@ async def notify_staff(message: str, user_name: str = "", platform: Optional[str
             return "⚠️ 通知發送失敗，請稍後再試或透過其他管道聯繫幹部。"
 
     except Exception as e:
-        eprint(f"[notify_staff] 工具執行錯誤: {e}")
+        _log_mcp_tool_failure("notify_staff", e, platform=platform)
         return f"⚠️ 通知發送時發生錯誤：{str(e)}"
 
 
@@ -323,7 +366,12 @@ async def generate_checkin_code(platform: str, account_id: str, name: str = "", 
         )
 
     except Exception as e:
-        eprint(f"[generate_checkin_code] 工具執行錯誤: {e}")
+        _log_mcp_tool_failure(
+            "generate_checkin_code",
+            e,
+            platform=platform,
+            account_id=account_id,
+        )
         return f"⚠️ 產生簽到碼時發生錯誤：{str(e)}"
 
 
@@ -350,7 +398,12 @@ async def bind_email(email: str, platform: str, account_id: str) -> str:
         result = _bind_email_to_platform(email, platform, account_id)
         return result["message"]
     except Exception as e:
-        eprint(f"[bind_email] 工具執行錯誤: {e}")
+        _log_mcp_tool_failure(
+            "bind_email",
+            e,
+            platform=platform,
+            account_id=account_id,
+        )
         return f"⚠️ 綁定時發生錯誤：{str(e)}"
 
 
@@ -374,7 +427,12 @@ async def update_subscribe(platform: str, account_id: str, subscribe: str) -> st
         result = _update_subscribe(platform, account_id, subscribe)
         return result["message"]
     except Exception as e:
-        eprint(f"[update_subscribe] 工具執行錯誤: {e}")
+        _log_mcp_tool_failure(
+            "update_subscribe",
+            e,
+            platform=platform,
+            account_id=account_id,
+        )
         return f"⚠️ 更新訂閱設定時發生錯誤：{str(e)}"
 
 
@@ -398,7 +456,12 @@ async def update_personal_prompt(platform: str, account_id: str, personal_prompt
         result = _update_personal_prompt(platform, account_id, personal_prompt)
         return result["message"]
     except Exception as e:
-        eprint(f"[update_personal_prompt] 工具執行錯誤: {e}")
+        _log_mcp_tool_failure(
+            "update_personal_prompt",
+            e,
+            platform=platform,
+            account_id=account_id,
+        )
         return f"⚠️ 更新個性備註時發生錯誤：{str(e)}"
 
 
@@ -498,7 +561,13 @@ async def notify_members(role: str, event_date: str = "", note: str = "", custom
     # Mode A: custom message (no event needed)
     if custom_message and custom_message.strip():
         message = f"NTUAI 通知\n\n{custom_message.strip()}"
-        eprint("[notify_members] Sending custom notification")
+        log_event(
+            "job_started",
+            "mcp_server",
+            status="started",
+            job="notify_members",
+            notification_type="custom",
+        )
 
         members = await asyncio.to_thread(load_members)
         result = await asyncio.to_thread(notifications.send_notification_to_members, message, members)
@@ -515,6 +584,16 @@ async def notify_members(role: str, event_date: str = "", note: str = "", custom
             f"```\n[STAFF NOTIFY] Custom message\n"
             f"Discord: {result['discord_ok']}/{result['discord_ok']+result['discord_fail']}\n```"
         )
+        log_event(
+            "job_completed",
+            "mcp_server",
+            status="success" if result["discord_fail"] == 0 else "partial_failure",
+            job="notify_members",
+            notification_type="custom",
+            recipient_count=result["total_members"],
+            sent_count=result["discord_ok"],
+            failed_count=result["discord_fail"],
+        )
         return summary
 
     # Mode B: event notification
@@ -525,7 +604,14 @@ async def notify_members(role: str, event_date: str = "", note: str = "", custom
             return f"找不到日期為 {event_date} 的活動，請確認日期格式為 YYYY/MM/DD。"
 
         message = notifications.format_staff_notification(event, note=note.strip() if note else "")
-        eprint(f"[notify_members] Sending notification for {event['title']} ({event_date})")
+        log_event(
+            "job_started",
+            "mcp_server",
+            status="started",
+            job="notify_members",
+            notification_type="event",
+            event_date=event_date,
+        )
 
         members = await asyncio.to_thread(load_members)
         result = await asyncio.to_thread(notifications.send_notification_to_members, message, members)
@@ -542,6 +628,17 @@ async def notify_members(role: str, event_date: str = "", note: str = "", custom
             DISCORD_LOG_CHANNEL_ID,
             f"```\n[STAFF NOTIFY] {event['title']} ({event_date})\n"
             f"Discord: {result['discord_ok']}/{result['discord_ok']+result['discord_fail']}\n```"
+        )
+        log_event(
+            "job_completed",
+            "mcp_server",
+            status="success" if result["discord_fail"] == 0 else "partial_failure",
+            job="notify_members",
+            notification_type="event",
+            event_date=event_date,
+            recipient_count=result["total_members"],
+            sent_count=result["discord_ok"],
+            failed_count=result["discord_fail"],
         )
         return summary
 
@@ -583,12 +680,24 @@ def entrypoint(http: bool = False, host: str = "0.0.0.0", port: int = 5191):
             Route("/health", health_check, methods=["GET"]),
         ]
 
-        eprint(f"Starting MCP server (streamable-http) on {host}:{port}...")
-        eprint(f"MCP endpoint: http://{host}:{port}/mcp")
-        eprint(f"Health check: http://{host}:{port}/health")
+        log_event(
+            "service_started",
+            "mcp_server",
+            status="running",
+            service="mcp_server",
+            transport="streamable_http",
+            host=host,
+            port=port,
+        )
 
         starlette_app = mcp.streamable_http_app()
         uvicorn.run(starlette_app, host=host, port=port, log_level="info")
     else:
-        eprint("Starting MCP server in stdio mode...")
+        log_event(
+            "service_started",
+            "mcp_server",
+            status="running",
+            service="mcp_server",
+            transport="stdio",
+        )
         mcp.run(transport="stdio")

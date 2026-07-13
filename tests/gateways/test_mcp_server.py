@@ -19,6 +19,7 @@
 #
 
 import asyncio
+import json
 
 import pytest
 
@@ -131,6 +132,14 @@ def test_generate_checkin_code_handles_member_and_guest_flows(
 def test_member_tool_wrappers_return_messages_and_handle_exceptions(
     monkeypatch, tool_name, dependency_name, args, error_prefix
 ):
+    events = []
+    monkeypatch.setattr(
+        mcp_server,
+        "log_event",
+        lambda event, component, **fields: events.append(
+            {"event": event, "component": component, **fields}
+        ),
+    )
     tool = getattr(mcp_server, tool_name)
     monkeypatch.setattr(
         mcp_server, dependency_name, lambda *_: {"message": "service message"}
@@ -142,6 +151,19 @@ def test_member_tool_wrappers_return_messages_and_handle_exceptions(
 
     monkeypatch.setattr(mcp_server, dependency_name, fail)
     assert _run(tool(*args)) == f"{error_prefix}：service unavailable"
+    assert events == [
+        {
+            "event": "operation_failed",
+            "component": "mcp_server",
+            "level": "error",
+            "platform": "Discord",
+            "status": "error",
+            "operation": tool_name,
+            "account_id": "account-1",
+            "error": events[0]["error"],
+        }
+    ]
+    assert isinstance(events[0]["error"], RuntimeError)
 
 
 def test_notify_members_rejects_non_staff_before_loading_data(monkeypatch):
@@ -258,3 +280,60 @@ def test_notify_members_lists_upcoming_events(monkeypatch, upcoming, expected_pa
     result = _run(mcp_server.notify_members("部員"))
 
     assert all(part in result for part in expected_parts)
+
+
+def test_course_retriever_log_redacts_query_and_identifiers(monkeypatch, capsys):
+    monkeypatch.setattr(
+        mcp_server.course_catalog,
+        "load_course_data_from_url",
+        lambda *_: None,
+    )
+    monkeypatch.setattr(
+        mcp_server,
+        "check_user_permission",
+        lambda *_: (True, "社員"),
+    )
+    monkeypatch.setattr(
+        mcp_server.course_catalog,
+        "get_all_course_data",
+        lambda *_: "course data",
+    )
+
+    result = _run(
+        mcp_server.search_course_chunks_by_semantics(
+            "Discord",
+            "private-account",
+            "",
+            "private-channel",
+        )
+    )
+
+    captured = capsys.readouterr()
+    assert result.startswith("course data")
+    assert captured.out == ""
+    entry = json.loads(captured.err)
+    assert entry["event"] == "tool_invoked"
+    assert entry["account_id"].startswith("sha256:")
+    assert entry["channel_id"].startswith("sha256:")
+    assert "private-account" not in json.dumps(entry)
+    assert "private-channel" not in json.dumps(entry)
+
+
+def test_stdio_entrypoint_emits_structured_log_without_stdout(monkeypatch, capsys):
+    calls = []
+    monkeypatch.setattr(mcp_server, "initialize_dependencies", lambda: None)
+    monkeypatch.setattr(
+        mcp_server.mcp,
+        "run",
+        lambda **kwargs: calls.append(kwargs),
+    )
+
+    mcp_server.entrypoint(http=False)
+
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert calls == [{"transport": "stdio"}]
+    entry = json.loads(captured.err)
+    assert entry["event"] == "service_started"
+    assert entry["component"] == "mcp_server"
+    assert entry["transport"] == "stdio"

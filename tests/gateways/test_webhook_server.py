@@ -18,8 +18,20 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
-from ian.gateways import facebook_webhook, line_webhook, webhook_server
+import json
+import warnings
+
+import pytest
+from linebot.exceptions import InvalidSignatureError
+
 from ian.config import MEMBER_MAPPING_FILE
+from ian.gateways import facebook_webhook, line_webhook, webhook_server
+
+
+def _invalid_signature_error():
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return InvalidSignatureError("private signature")
 
 
 def test_webhook_post_delegates_facebook_messages(monkeypatch):
@@ -119,3 +131,58 @@ def test_facebook_member_mapping_path_comes_from_config():
     assert facebook_webhook.MAPPING_FILE_PATH == MEMBER_MAPPING_FILE
     assert MEMBER_MAPPING_FILE.name == "member_mapping.csv"
     assert MEMBER_MAPPING_FILE.parent.name == "data"
+
+
+@pytest.mark.parametrize(
+    ("error_factory", "expected_event", "expected_status", "response_status"),
+    [
+        pytest.param(
+            _invalid_signature_error,
+            "request_rejected",
+            "invalid_signature",
+            400,
+            id="invalid-signature",
+        ),
+        pytest.param(
+            lambda: RuntimeError("private callback body"),
+            "request_failed",
+            "error",
+            200,
+            id="handler-failure",
+        ),
+    ],
+)
+def test_line_callback_emits_structured_failure_event(
+    monkeypatch,
+    capsys,
+    error_factory,
+    expected_event,
+    expected_status,
+    response_status,
+):
+    error = error_factory()
+
+    def fail(*_args):
+        raise error
+
+    monkeypatch.setattr(line_webhook.line_handler, "handle", fail)
+    webhook_server.configure_platforms("line")
+
+    try:
+        response = webhook_server.app.test_client().post(
+            "/line/callback",
+            data="private callback body",
+            headers={"X-Line-Signature": "private signature"},
+        )
+    finally:
+        webhook_server.configure_platforms("all")
+
+    captured = capsys.readouterr()
+    entry = json.loads(captured.err.strip().splitlines()[-1])
+    assert response.status_code == response_status
+    assert entry["event"] == expected_event
+    assert entry["component"] == "webhook_server"
+    assert entry["platform"] == "LINE"
+    assert entry["status"] == expected_status
+    assert "private callback body" not in captured.err
+    assert "private signature" not in captured.err

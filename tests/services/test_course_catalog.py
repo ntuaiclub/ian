@@ -22,6 +22,8 @@ import time
 from datetime import datetime
 
 import pandas as pd
+import pytest
+import requests
 
 from ian.config import TZ_TPE
 from ian.services import course_catalog
@@ -138,3 +140,69 @@ def test_load_course_data_uses_valid_cache(monkeypatch, tmp_path):
 
     assert list(df["社課主題/活動名稱"]) == ["生成式 AI"]
     assert course_catalog.course_data is df
+
+
+@pytest.mark.parametrize(
+    ("max_retries", "expected_statuses"),
+    [
+        pytest.param(1, ["failure"], id="single-attempt"),
+        pytest.param(2, ["retrying", "failure"], id="retry-then-fail"),
+    ],
+)
+def test_fetch_failure_events_report_retry_state(
+    monkeypatch,
+    max_retries,
+    expected_statuses,
+):
+    events = []
+
+    def fail(*_args, **_kwargs):
+        raise requests.RequestException("private URL details")
+
+    monkeypatch.setattr(course_catalog.requests, "get", fail)
+    monkeypatch.setattr(course_catalog.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(
+        course_catalog,
+        "log_event",
+        lambda event, component, **fields: events.append(
+            {"event": event, "component": component, **fields}
+        ),
+    )
+
+    assert course_catalog._fetch_from_url("https://private.example", max_retries) is None
+
+    failures = [event for event in events if event["event"] == "external_fetch_failure"]
+    assert [event["status"] for event in failures] == expected_statuses
+    assert [event["attempt"] for event in failures] == list(
+        range(1, max_retries + 1)
+    )
+    assert all(event["component"] == "course_catalog" for event in failures)
+    assert all(event["max_attempts"] == max_retries for event in failures)
+
+
+def test_missing_course_url_emits_configuration_event(monkeypatch, tmp_path):
+    events = []
+    monkeypatch.setattr(
+        course_catalog,
+        "COURSE_CACHE_FILE",
+        str(tmp_path / "missing.csv"),
+    )
+    monkeypatch.setattr(course_catalog, "_is_cache_valid", lambda: False)
+    monkeypatch.setattr(
+        course_catalog,
+        "log_event",
+        lambda event, component, **fields: events.append(
+            {"event": event, "component": component, **fields}
+        ),
+    )
+
+    assert course_catalog.load_course_data_from_url("") is None
+    assert events == [
+        {
+            "event": "configuration_invalid",
+            "component": "course_catalog",
+            "level": "warning",
+            "status": "missing",
+            "setting": "course_data_url",
+        }
+    ]
