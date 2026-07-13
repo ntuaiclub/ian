@@ -20,6 +20,7 @@
 
 import asyncio
 import threading
+import time
 
 import requests
 from linebot import LineBotApi, WebhookHandler
@@ -32,14 +33,11 @@ from ian.gateways.messaging_common import (
     get_current_time,
     save_chat_history,
 )
-from ian.services.agent import (
-    add_log,
-)
 from ian.services.member_store import (
     get_member_name as get_member_name_from_db,
     get_member_role as get_member_role_from_db,
 )
-from ian.utils.console import eprint
+from ian.utils.logging import elapsed_ms, hash_identifier, log_event
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 line_handler = WebhookHandler(LINE_CHANNEL_SECRET)
@@ -51,7 +49,16 @@ def get_line_user_profile(user_id):
         profile = line_bot_api.get_profile(user_id)
         return profile.display_name
     except Exception as e:
-        print(f"取得 LINE 使用者資訊失敗: {e}")
+        log_event(
+            "external_send_failure",
+            "line_webhook",
+            level="error",
+            platform="LINE",
+            status="error",
+            user_id=user_id,
+            operation="get_user_profile",
+            error=e,
+        )
         return get_member_name_from_db("LINE", user_id) or f"LINE_{user_id[:8]}"
 
 
@@ -73,7 +80,15 @@ def handle_line_message(event):
         chat_id = event.source.user_id
 
     if source_type != "1on1" and chat_id not in LINE_ALLOWED_GROUPS:
-        eprint(f"LINE: 來源 {chat_id} 不在白名單中，忽略")
+        log_event(
+            "request_ignored",
+            "line_webhook",
+            platform="LINE",
+            status="unauthorized",
+            correlation_id=hash_identifier(event.reply_token),
+            user_id=user_id,
+            channel_id=chat_id,
+        )
         return
 
     actual_question = user_text.strip()
@@ -82,7 +97,17 @@ def handle_line_message(event):
         line_bot_api.reply_message(event.reply_token, TextSendMessage(text="請輸入您的問題！"))
         return
 
-    eprint(f"LINE: [{source_type}:{chat_id}] 收到 {user_id} 的訊息: {actual_question}")
+    log_event(
+        "request_received",
+        "line_webhook",
+        platform="LINE",
+        status="accepted",
+        correlation_id=hash_identifier(event.reply_token),
+        user_id=user_id,
+        channel_id=chat_id,
+        source_type=source_type,
+        message_length=len(actual_question),
+    )
 
     try:
         loading_url = "https://api.line.me/v2/bot/chat/loading/start"
@@ -96,7 +121,17 @@ def handle_line_message(event):
         }
         requests.post(loading_url, headers=headers, json=loading_data, timeout=3)
     except Exception as e:
-        eprint(f"LINE: 載入動畫啟動失敗: {e}")
+        log_event(
+            "external_send_failure",
+            "line_webhook",
+            level="error",
+            platform="LINE",
+            status="error",
+            correlation_id=hash_identifier(event.reply_token),
+            channel_id=chat_id,
+            operation="loading_indicator",
+            error=e,
+        )
 
     coro = process_line_message_task(event.reply_token, user_id, actual_question, chat_id, source_type)
     thread = threading.Thread(target=asyncio.run, args=(coro,))
@@ -105,6 +140,8 @@ def handle_line_message(event):
 
 async def process_line_message_task(reply_token, user_id, user_message, chat_id, source_type="group"):
     """LINE 訊息背景處理任務。"""
+    correlation_id = hash_identifier(reply_token)
+    started_at = time.monotonic()
     try:
         user_name = get_line_user_profile(user_id)
         if source_type == "1on1":
@@ -112,9 +149,17 @@ async def process_line_message_task(reply_token, user_id, user_message, chat_id,
         else:
             roles = "社員"
 
-        eprint(f"LINE: 處理 {user_name} 的訊息：{user_message}")
-
         current_time = get_current_time()
+        log_event(
+            "agent_invoked",
+            "line_webhook",
+            platform="LINE",
+            status="started",
+            correlation_id=correlation_id,
+            user_id=user_id,
+            channel_id=chat_id,
+            message_length=len(user_message),
+        )
         agent_result = await run_agent_message_flow(
             session_id=user_id,
             user_name=user_name,
@@ -127,11 +172,29 @@ async def process_line_message_task(reply_token, user_id, user_message, chat_id,
         )
 
         if not agent_result.should_reply:
-            eprint("LINE: Agent 決定不回覆此訊息")
+            log_event(
+                "no_response",
+                "line_webhook",
+                platform="LINE",
+                status="success",
+                duration_ms=elapsed_ms(started_at),
+                correlation_id=correlation_id,
+                user_id=user_id,
+                reason="agent_decision",
+            )
             return
 
         if "已達今日使用上限" in agent_result.text:
-            eprint("LINE: 使用者已達上限，不回覆")
+            log_event(
+                "no_response",
+                "line_webhook",
+                platform="LINE",
+                status="rate_limited",
+                duration_ms=elapsed_ms(started_at),
+                correlation_id=correlation_id,
+                user_id=user_id,
+                reason="usage_limit",
+            )
             return
 
         line_messages = []
@@ -142,20 +205,45 @@ async def process_line_message_task(reply_token, user_id, user_message, chat_id,
         if line_messages:
             try:
                 line_bot_api.reply_message(reply_token, line_messages)
-                eprint(f"LINE: reply_message 成功 -> chat_id={chat_id}, 訊息數={len(line_messages)}")
+                log_event(
+                    "reply_sent",
+                    "line_webhook",
+                    platform="LINE",
+                    status="success",
+                    duration_ms=elapsed_ms(started_at),
+                    correlation_id=correlation_id,
+                    user_id=user_id,
+                    channel_id=chat_id,
+                    message_count=len(line_messages),
+                )
             except Exception as reply_err:
-                eprint(f"LINE: reply_message 失敗 -> chat_id={chat_id}, 錯誤: {reply_err}")
-                import traceback
-
-                eprint(traceback.format_exc())
+                log_event(
+                    "external_send_failure",
+                    "line_webhook",
+                    level="error",
+                    platform="LINE",
+                    status="error",
+                    duration_ms=elapsed_ms(started_at),
+                    correlation_id=correlation_id,
+                    user_id=user_id,
+                    channel_id=chat_id,
+                    operation="reply_message",
+                    error=reply_err,
+                )
                 return
 
         save_chat_history(user_id, user_name, user_message, agent_result.text, "LINE")
-        eprint(f"LINE: 訊息處理完成並已回覆給 {user_name}")
 
     except Exception as e:
-        eprint(f"LINE: 背景訊息處理任務發生錯誤: {e}")
-        import traceback
-
-        eprint(traceback.format_exc())
-        add_log("ERROR", error=str(e), context=f"LINE message processing for {user_id} in {chat_id}")
+        log_event(
+            "request_failed",
+            "line_webhook",
+            level="error",
+            platform="LINE",
+            status="error",
+            duration_ms=elapsed_ms(started_at),
+            correlation_id=correlation_id,
+            user_id=user_id,
+            channel_id=chat_id,
+            error=e,
+        )

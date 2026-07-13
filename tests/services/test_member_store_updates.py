@@ -18,6 +18,7 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -217,7 +218,12 @@ def test_bind_email_continues_when_local_cache_save_fails(
 
     assert result["success"] is True
     assert cache.find_by_email("alice@example.test")["discord_acc_id"] == "discord-new"
-    assert "Failed to save local DB after binding: disk full" in capsys.readouterr().err
+    entry = json.loads(capsys.readouterr().err)
+    assert entry["event"] == "operation_failed"
+    assert entry["operation"] == "save_member_cache"
+    assert entry["source"] == "bind_email"
+    assert entry["error_type"] == "OSError"
+    assert "disk full" not in json.dumps(entry)
 
 
 @pytest.mark.parametrize(
@@ -363,7 +369,12 @@ def test_update_subscribe_continues_when_local_cache_save_fails(
 
     assert result["success"] is True
     assert cache.find_by_email("alice@example.test")["subscribe"] == "discord"
-    assert "Failed to save local DB after update: disk full" in capsys.readouterr().err
+    entry = json.loads(capsys.readouterr().err)
+    assert entry["event"] == "operation_failed"
+    assert entry["operation"] == "save_member_cache"
+    assert entry["source"] == "update_member_field"
+    assert entry["error_type"] == "OSError"
+    assert "disk full" not in json.dumps(entry)
 
 
 def test_update_personal_prompt_rejects_missing_member(monkeypatch, install_cache):

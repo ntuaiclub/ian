@@ -24,6 +24,7 @@ import hashlib
 import json
 import sys
 import threading
+import time
 from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any, TextIO
@@ -39,7 +40,10 @@ _IDENTIFIER_FIELDS = frozenset(
     {
         "account_id",
         "channel_id",
+        "interaction_id",
+        "message_id",
         "recipient_id",
+        "reply_token",
         "sender_id",
         "session_id",
         "user_id",
@@ -75,6 +79,11 @@ _RESERVED_FIELDS = frozenset(
 )
 
 
+def elapsed_ms(started_at: float) -> float:
+    """Return elapsed monotonic time in milliseconds."""
+    return (time.monotonic() - started_at) * 1000
+
+
 def _stable_hash(value: Identifier) -> str:
     if value is None:
         return ""
@@ -85,9 +94,14 @@ def _stable_hash(value: Identifier) -> str:
     return f"sha256:{digest}"
 
 
+def hash_identifier(identifier: Identifier) -> str:
+    """Return a stable pseudonym for an identifier used in log correlation."""
+    return _stable_hash(identifier)
+
+
 def hash_account_id(account_id: Identifier) -> str:
     """Return a stable pseudonym for a platform account identifier."""
-    return _stable_hash(account_id)
+    return hash_identifier(account_id)
 
 
 def hash_email(email: str | None) -> str:

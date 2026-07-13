@@ -149,5 +149,9 @@ def test_agent_logging_uses_shared_client_for_failure(monkeypatch, capsys):
     agent_logging._send_log_to_discord_sync({"type": "INFO", "message": "hello"})
 
     assert calls == [(123, "```\n[] INFO\n└─ hello\n```")]
-    captured = capsys.readouterr()
-    assert "Failed to send log to Discord: 500 - boom" in captured.err
+    log_entry = json.loads(capsys.readouterr().err)
+    assert log_entry["event"] == "external_send_failure"
+    assert log_entry["operation"] == "send_agent_log"
+    assert log_entry["http_status"] == 500
+    assert "123" not in json.dumps(log_entry)
+    assert "boom" not in json.dumps(log_entry)

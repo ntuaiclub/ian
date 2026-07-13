@@ -21,7 +21,6 @@
 import asyncio
 import threading
 import time
-import traceback
 from concurrent.futures import Future
 from datetime import datetime, timedelta, timezone
 from queue import Queue
@@ -38,7 +37,7 @@ from ian.services.agent.callbacks import (
     DiscordLogCallbackHandler,
     extract_text_from_output,
 )
-from ian.services.agent.logging import add_log, eprint, start_log_processor
+from ian.services.agent.logging import add_log, start_log_processor
 from ian.services.agent.prompt import SYS_PROMPT
 from ian.services.agent.sessions import (
     clear_session_if_timeout,
@@ -50,6 +49,12 @@ from ian.services.agent.sessions import (
 )
 from ian.services.agent.usage import check_and_update_usage
 from ian.services.member_store import lookup_member_by_platform
+from ian.utils.logging import (
+    elapsed_ms,
+    hash_identifier,
+    log_event,
+    redact_user_content,
+)
 
 
 def _unwrap_exception(exc: BaseException) -> BaseException:
@@ -88,7 +93,14 @@ async def run_agentic_workflow():
     client = MultiServerMCPClient(mcp_config)
     google_api_key = GOOGLE_API_KEY
     if not google_api_key:
-        print("Error: GOOGLE_API_KEY not found in environment variables.")
+        log_event(
+            "job_failed",
+            "agent_runtime",
+            level="critical",
+            status="error",
+            job="agent_startup",
+            reason="missing_google_api_key",
+        )
     primary_llm = ChatGoogleGenerativeAI(
         model="gemini-3-flash-preview",
         google_api_key=google_api_key,
@@ -106,14 +118,18 @@ async def run_agentic_workflow():
             )
             if session_id is None:
                 break
+            invocation_started_at = time.monotonic()
+            correlation_id = hash_identifier(session_id)
 
             # Log 使用者訊息
-            add_log("USER_MESSAGE",
-                    user_name=user_name,
-                    user_role=str(user_role),
-                    message=question,
-                    session_id=session_id,
-                    platform=platform)
+            add_log(
+                "USER_MESSAGE",
+                user_name=hash_identifier(user_name),
+                user_role=str(user_role),
+                message=redact_user_content(question),
+                session_id=hash_identifier(session_id),
+                platform=platform,
+            )
 
             # 動態產生時間資訊
             tz_taipei = timezone(timedelta(hours=8))
@@ -136,7 +152,12 @@ async def run_agentic_workflow():
                     current_timestamp,
                 )
                 if was_created:
-                    add_log("SESSION", action="Created", user_name=user_name, session_id=session_id)
+                    add_log(
+                        "SESSION",
+                        action="Created",
+                        user_name=hash_identifier(user_name),
+                        session_id=hash_identifier(session_id),
+                    )
 
                 # Initialize or re-initialize agent if needed
                 if session.get("agent") is None:
@@ -148,8 +169,14 @@ async def run_agentic_workflow():
                         checkpointer=memory,
                     )
                     set_session_agent(session_id, agent, memory)
-                    print(
-                        f"Created agent for {session_id} ({user_name}) session in {nowdatetime}"
+                    log_event(
+                        "operation_completed",
+                        "agent_runtime",
+                        platform=platform,
+                        status="success",
+                        correlation_id=correlation_id,
+                        session_id=session_id,
+                        operation="create_session_agent",
                     )
 
             # Agent invocation (outside the lock for long-running I/O)
@@ -190,12 +217,38 @@ async def run_agentic_workflow():
                     if invoke_attempt > 0:
                         # 重建 agent 並重新取得 MCP 工具，以清除損壞的連線/對話歷史
                         root_cause = _unwrap_exception(last_invoke_error) if last_invoke_error else last_invoke_error
-                        add_log("RETRY", user_name=user_name, reason=f"Tool 執行錯誤，重試中 ({type(root_cause).__name__}: {root_cause})", attempt=invoke_attempt + 1)
-                        print(f"🔄 Tool 執行錯誤，第 {invoke_attempt + 1} 次重試 ({user_name})")
+                        add_log(
+                            "RETRY",
+                            user_name=hash_identifier(user_name),
+                            reason=f"Tool 執行錯誤，重試中 ({type(root_cause).__name__})",
+                            attempt=invoke_attempt + 1,
+                        )
+                        log_event(
+                            "agent_retry",
+                            "agent_runtime",
+                            level="warning",
+                            platform=platform,
+                            status="retrying",
+                            correlation_id=correlation_id,
+                            session_id=session_id,
+                            reason="invoke_error",
+                            attempt=invoke_attempt + 1,
+                            error=root_cause,
+                        )
                         try:
                             tools = await client.get_tools()
                         except Exception as mcp_err:
-                            print(f"⚠️ MCP 工具重新取得失敗: {mcp_err}，嘗試重建 client")
+                            log_event(
+                                "operation_failed",
+                                "agent_runtime",
+                                level="warning",
+                                platform=platform,
+                                status="retrying",
+                                correlation_id=correlation_id,
+                                session_id=session_id,
+                                operation="refresh_mcp_tools",
+                                error=mcp_err,
+                            )
                             client = MultiServerMCPClient(mcp_config)
                             tools = await client.get_tools()
                         memory = MemorySaver()
@@ -216,8 +269,23 @@ async def run_agentic_workflow():
                                 prev_results = log_callback.tool_results
                                 log_callback = DiscordLogCallbackHandler()
                                 log_callback.tool_results = prev_results  # 保留上次 tool 回傳的 URL
-                                add_log("RETRY", user_name=user_name, reason="URL 驗證失敗，重試中", attempt=attempt + 1)
-                                print(f"🔄 URL 驗證失敗，第 {attempt + 1} 次重試 ({user_name})")
+                                add_log(
+                                    "RETRY",
+                                    user_name=hash_identifier(user_name),
+                                    reason="URL 驗證失敗，重試中",
+                                    attempt=attempt + 1,
+                                )
+                                log_event(
+                                    "agent_retry",
+                                    "agent_runtime",
+                                    level="warning",
+                                    platform=platform,
+                                    status="retrying",
+                                    correlation_id=correlation_id,
+                                    session_id=session_id,
+                                    reason="url_validation",
+                                    attempt=attempt + 1,
+                                )
 
                             invoke_sys_content = sys_content
                             if attempt > 0:
@@ -275,29 +343,69 @@ async def run_agentic_workflow():
                             raise
                         last_invoke_error = invoke_error
                         root_cause = _unwrap_exception(invoke_error)
-                        add_log("ERROR", error=f"{type(root_cause).__name__}: {root_cause}", context=f"Tool execution for {user_name}")
-                        print(f"⚠️ ainvoke 錯誤 (attempt {invoke_attempt + 1}/{MAX_INVOKE_RETRIES}): {type(root_cause).__name__}: {root_cause}")
-                        traceback.print_exception(root_cause)
+                        add_log(
+                            "ERROR",
+                            error=type(root_cause).__name__,
+                            context="Tool execution",
+                        )
+                        log_event(
+                            "agent_retry",
+                            "agent_runtime",
+                            level="warning",
+                            platform=platform,
+                            status="failure",
+                            correlation_id=correlation_id,
+                            session_id=session_id,
+                            reason="invoke_error",
+                            attempt=invoke_attempt + 1,
+                            error=root_cause,
+                        )
                         if invoke_attempt >= MAX_INVOKE_RETRIES - 1:
                             # 所有重試都失敗，拋出讓外層處理
                             raise
 
                 fut.set_result(parsed_agent_response)
 
-                # Log Agent 回應
-                add_log("AGENT_RESPONSE", user_name=user_name, response=parsed_agent_response)
-
-                print(
-                    f"✅ Agent 回應給 {user_name} ({user_role}): {parsed_agent_response}..."
+                log_event(
+                    "agent_completed",
+                    "agent_runtime",
+                    platform=platform,
+                    status="success",
+                    duration_ms=elapsed_ms(invocation_started_at),
+                    correlation_id=correlation_id,
+                    session_id=session_id,
+                    account_id=account_id,
                 )
+
+                # Log Agent 回應
+                add_log(
+                    "AGENT_RESPONSE",
+                    user_name=hash_identifier(user_name),
+                    response=redact_user_content(parsed_agent_response),
+                )
+
             except BaseException as error_msg:
                 if isinstance(error_msg, (KeyboardInterrupt, SystemExit)):
                     raise
                 # Log 錯誤（展開 ExceptionGroup 以顯示真正的根因）
                 root_cause = _unwrap_exception(error_msg)
-                add_log("ERROR", error=f"{type(root_cause).__name__}: {root_cause}", context=f"LLM invoke for {user_name}")
-                print(f"Error happened on llm invoke: {type(root_cause).__name__}: {root_cause}")
-                traceback.print_exception(root_cause)
+                add_log(
+                    "ERROR",
+                    error=type(root_cause).__name__,
+                    context="LLM invoke",
+                )
+                log_event(
+                    "agent_failed",
+                    "agent_runtime",
+                    level="error",
+                    platform=platform,
+                    status="error",
+                    duration_ms=elapsed_ms(invocation_started_at),
+                    correlation_id=correlation_id,
+                    session_id=session_id,
+                    account_id=account_id,
+                    error=root_cause,
+                )
                 # 重置 session，避免殘留的 AIMessage（帶 tool_calls 但無 ToolMessage）
                 # 導致後續請求因 INVALID_CHAT_HISTORY 持續失敗
                 with sessions_lock:
@@ -324,11 +432,23 @@ def start_dispatcher(user_name: str, current_time):
             t = threading.Thread(target=lambda: loop.run_forever(), daemon=True)
             t.start()
             asyncio.run_coroutine_threadsafe(run_agentic_workflow(), loop)
-            print(f"事件循環線程已啟動 (由 {user_name} 觸發)")
+            log_event(
+                "service_started",
+                "agent_runtime",
+                status="running",
+                service="agent_dispatcher",
+            )
             dispatcher_started = True
             return loop_agent
         except Exception as error:
-            print(f"Error starting dispatcher: {error}")
+            log_event(
+                "job_failed",
+                "agent_runtime",
+                level="error",
+                status="error",
+                job="start_dispatcher",
+                error=error,
+            )
 
 
 async def chat_with_agent(
@@ -344,14 +464,45 @@ async def chat_with_agent(
 
     # Prompt injection guardrail — check before anything else
     if detect_prompt_injection(question):
-        add_log("ERROR", error="Prompt injection blocked", context=f"{user_name} ({platform}): {question[:200]}")
-        eprint(f"🛡️ Prompt injection blocked from {user_name} ({platform})")
+        add_log("ERROR", error="Prompt injection blocked", context=f"{platform} request")
+        log_event(
+            "request_rejected",
+            "agent_runtime",
+            level="warning",
+            platform=platform,
+            status="blocked",
+            correlation_id=hash_identifier(session_id),
+            session_id=session_id,
+            account_id=account_id,
+            reason="prompt_injection",
+            message_length=len(question),
+        )
         return INJECTION_REJECTION_MSG
 
     # Check usage limit before processing
     if not check_and_update_usage(session_id):
+        log_event(
+            "no_response",
+            "agent_runtime",
+            platform=platform,
+            status="rate_limited",
+            correlation_id=hash_identifier(session_id),
+            session_id=session_id,
+            account_id=account_id,
+            reason="usage_limit",
+        )
         return "😌 已達今日使用上限，明天再來和我聊天吧！\nYou have reached the usage limit for today. Please come back and chat with me tomorrow!"
 
     fut = Future()
+    log_event(
+        "agent_invoked",
+        "agent_runtime",
+        platform=platform,
+        status="queued",
+        correlation_id=hash_identifier(session_id),
+        session_id=session_id,
+        account_id=account_id,
+        message_length=len(question),
+    )
     request_queue.put((session_id, user_name, question, user_role, timestamp, channel_id, platform, account_id, fut))
     return await asyncio.wrap_future(fut)

@@ -21,13 +21,13 @@
 import json
 import io
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from urllib.parse import quote
 
 import pandas as pd
 import requests
 
-from ian.config import COURSE_DATA_URL, MEMBER_DB_FILE
+from ian.config import COURSE_DATA_URL, MEMBER_DB_FILE, TZ_TPE
 from ian.domain.reminders import (
     find_events_on_date,
     format_reminder_message,
@@ -35,12 +35,15 @@ from ian.domain.reminders import (
     seconds_until_next_run,
 )
 from ian.services.notifications import send_discord_dm, send_log
-from ian.utils.console import eprint
-
-TZ_TPE = timezone(timedelta(hours=8))
+from ian.utils.logging import elapsed_ms, log_event
 
 REMINDER_HOUR = 19
 REMINDER_MINUTE = 0
+_FAILURE_NOTIFICATIONS = {
+    "fetch_course_data": "FAILED to fetch course data",
+    "prepare_events": "FAILED to prepare event data",
+    "load_members": "FAILED to load member data",
+}
 
 
 def load_members() -> list[dict]:
@@ -59,52 +62,88 @@ def fetch_course_data() -> pd.DataFrame:
     return pd.read_csv(io.StringIO(resp.text))
 
 
+def _report_job_failure(
+    started_at: float,
+    target_date: str,
+    stage: str,
+    error: Exception,
+) -> None:
+    log_event(
+        "job_failed",
+        "reminder_runner",
+        level="error",
+        status="error",
+        duration_ms=elapsed_ms(started_at),
+        job="daily_reminder",
+        stage=stage,
+        target_date=target_date,
+        error=error,
+    )
+    send_log(f"```\n[REMINDER] {_FAILURE_NOTIFICATIONS[stage]}\n```")
+
+
 def run_once(target_date: str | None = None, dry: bool = False):
+    started_at = time.monotonic()
     now = datetime.now(TZ_TPE)
-    eprint(f"[Reminder] Started at {now.strftime('%Y-%m-%d %H:%M:%S')} UTC+8")
 
     if target_date is None:
         tomorrow = now + timedelta(days=1)
         target_date = tomorrow.strftime("%Y/%m/%d")
 
-    eprint(f"[Reminder] Checking events for: {target_date}")
+    log_event(
+        "job_started",
+        "reminder_runner",
+        status="started",
+        job="daily_reminder",
+        target_date=target_date,
+        dry_run=dry,
+    )
 
     try:
         df = fetch_course_data()
-        eprint(f"[Reminder] Loaded {len(df)} events from Google Sheets")
     except Exception as e:
-        eprint(f"[Reminder] Failed to fetch course data: {e}")
-        send_log(f"```\n[REMINDER] FAILED to fetch course data: {e}\n```")
+        _report_job_failure(started_at, target_date, "fetch_course_data", e)
         return
 
-    events = find_events_on_date(df, target_date)
+    try:
+        events = find_events_on_date(df, target_date)
+        message = format_reminder_message(events) if events else ""
+    except Exception as e:
+        _report_job_failure(started_at, target_date, "prepare_events", e)
+        return
+
     if not events:
-        eprint(f"[Reminder] No events on {target_date}, done.")
+        log_event(
+            "job_completed",
+            "reminder_runner",
+            status="success",
+            duration_ms=elapsed_ms(started_at),
+            job="daily_reminder",
+            target_date=target_date,
+            event_count=0,
+            recipient_count=0,
+        )
         return
-
-    eprint(f"[Reminder] Found {len(events)} event(s) on {target_date}:")
-    for ev in events:
-        eprint(f"  - {ev['title']} ({ev['time']})")
-
-    message = format_reminder_message(events)
-    eprint(f"\n[Reminder] Message:\n{message}\n")
 
     try:
         members = load_members()
         bound = get_valid_bound_members(members)
     except Exception as e:
-        eprint(f"[Reminder] Failed to load member data: {e}")
-        send_log(f"```\n[REMINDER] FAILED to load member data: {e}\n```")
+        _report_job_failure(started_at, target_date, "load_members", e)
         return
 
     if dry:
-        eprint("[Reminder] DRY RUN — no messages sent.")
-        eprint(f"[Reminder] Would notify {len(bound)} member(s):")
-        for m in bound:
-            eprint(f"  - {m['name']} (Discord)")
+        log_event(
+            "job_completed",
+            "reminder_runner",
+            status="dry_run",
+            duration_ms=elapsed_ms(started_at),
+            job="daily_reminder",
+            target_date=target_date,
+            event_count=len(events),
+            recipient_count=len(bound),
+        )
         return
-
-    eprint(f"[Reminder] Notifying {len(bound)} member(s)...")
 
     discord_ok, discord_fail = 0, 0
 
@@ -118,16 +157,23 @@ def run_once(target_date: str | None = None, dry: bool = False):
             personal_message += f"\n\n簽到碼連結：{checkin_url}"
 
         if m["discord_id"]:
-            eprint(f"  Sending Discord DM to {name}...")
             try:
                 if send_discord_dm(m["discord_id"], personal_message):
                     discord_ok += 1
-                    eprint(f"  [Discord] {name} OK")
                 else:
                     discord_fail += 1
             except Exception as e:
                 discord_fail += 1
-                eprint(f"  [Discord] {name} failed: {e}")
+                log_event(
+                    "external_send_failure",
+                    "reminder_runner",
+                    level="error",
+                    platform="Discord",
+                    status="error",
+                    recipient_id=m["discord_id"],
+                    operation="send_reminder",
+                    error=e,
+                )
             time.sleep(0.5)
 
     event_titles = ", ".join(ev["title"] for ev in events)
@@ -139,21 +185,49 @@ def run_once(target_date: str | None = None, dry: bool = False):
         f"Total members notified: {discord_ok}\n"
         f"```"
     )
-    eprint(f"\n{summary}")
+    log_event(
+        "job_completed",
+        "reminder_runner",
+        status="success" if discord_fail == 0 else "partial_failure",
+        duration_ms=elapsed_ms(started_at),
+        job="daily_reminder",
+        target_date=target_date,
+        event_count=len(events),
+        recipient_count=len(bound),
+        sent_count=discord_ok,
+        failed_count=discord_fail,
+    )
     send_log(summary)
 
 def daemon_loop():
-    eprint("[Reminder] Daemon mode started")
+    log_event(
+        "service_started",
+        "reminder_runner",
+        status="running",
+        service="reminder_daemon",
+    )
     while True:
         wait = seconds_until_next_run(hour=REMINDER_HOUR, minute=REMINDER_MINUTE)
         next_run = datetime.now(TZ_TPE) + timedelta(seconds=wait)
-        eprint(
-            f"[Reminder] Next run in {wait:.0f}s "
-            f"(at {next_run.strftime('%Y-%m-%d %H:%M:%S')} UTC+8)"
+        log_event(
+            "job_scheduled",
+            "reminder_runner",
+            status="scheduled",
+            job="daily_reminder",
+            wait_seconds=wait,
+            next_run=next_run.isoformat(),
         )
         time.sleep(wait)
         try:
             run_once()
         except Exception as e:
-            eprint(f"[Reminder] Error during run: {e}")
-            send_log(f"```\n[REMINDER] ERROR: {e}\n```")
+            log_event(
+                "job_failed",
+                "reminder_runner",
+                level="error",
+                status="error",
+                job="daily_reminder",
+                stage="daemon_loop",
+                error=e,
+            )
+            send_log("```\n[REMINDER] ERROR\n```")

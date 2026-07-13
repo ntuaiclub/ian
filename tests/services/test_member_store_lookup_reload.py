@@ -18,6 +18,7 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -139,3 +140,41 @@ def test_get_member_role_handles_member_status_and_tiers(
 
     assert member_store.get_member_role("Discord", "discord-1") == expected_role
     assert calls == [("Discord", "discord-1")]
+
+
+def test_sync_member_data_logs_started_and_completed_without_member_details(
+    monkeypatch, tmp_path, capsys
+):
+    cache = member_store.MemberCache(tmp_path / "members.json")
+    members = [_valid_member()]
+    monkeypatch.setattr(member_store, "_cache", cache)
+    monkeypatch.setattr(member_store, "fetch_members", lambda *_args: members)
+
+    assert member_store.sync_member_data() is True
+
+    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert [entry["event"] for entry in entries] == ["job_started", "job_completed"]
+    assert entries[-1]["member_count"] == 1
+    assert "alice@example.com" not in json.dumps(entries)
+    assert "discord-1" not in json.dumps(entries)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        pytest.param(member_store.MemberApiError("private API detail"), id="api-error"),
+        pytest.param(RuntimeError("private runtime detail"), id="unexpected-error"),
+    ],
+)
+def test_sync_member_data_logs_error_type_without_message(monkeypatch, capsys, error):
+    def fail(*_args):
+        raise error
+
+    monkeypatch.setattr(member_store, "fetch_members", fail)
+
+    assert member_store.sync_member_data() is False
+
+    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert entries[-1]["event"] == "job_failed"
+    assert entries[-1]["error_type"] == type(error).__name__
+    assert str(error) not in json.dumps(entries)

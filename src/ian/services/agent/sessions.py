@@ -20,6 +20,8 @@
 
 import threading
 
+from ian.utils.logging import log_event
+
 TIMEOUT_SECONDS = 900
 
 sessions: dict[str, dict] = {}
@@ -31,12 +33,20 @@ def clear_session_if_timeout(session_id: str, current_timestamp: float):
     if session_id in sessions:
         last_time = sessions[session_id].get("last_interaction_time")
         if last_time and (current_timestamp - last_time > TIMEOUT_SECONDS):
-            user_name = sessions[session_id].get("user_name", "unknown")
             sessions.pop(session_id)
-            print(f"Session {session_id} ({user_name}) timed out and was cleared.")
+            log_event(
+                "session_expired",
+                "agent_sessions",
+                status="cleared",
+                session_id=session_id,
+            )
         elif not last_time:
-            print(
-                f"Warning: Session {session_id} found without last_interaction_time during timeout check."
+            log_event(
+                "session_invalid",
+                "agent_sessions",
+                level="warning",
+                status="missing_timestamp",
+                session_id=session_id,
             )
 
 
@@ -57,13 +67,23 @@ def upsert_session(
             "channel_id": channel_id,
             "last_interaction_time": current_timestamp,
         }
-        print(f"Initialized session for {session_id} ({user_name}) at {current_timestamp}")
+        log_event(
+            "session_created",
+            "agent_sessions",
+            status="success",
+            session_id=session_id,
+        )
         return sessions[session_id], True
 
     sessions[session_id]["last_interaction_time"] = current_timestamp
     sessions[session_id]["user_name"] = user_name
     sessions[session_id]["channel_id"] = channel_id
-    print(f"Updated session for {session_id} ({user_name}) at {current_timestamp}")
+    log_event(
+        "session_updated",
+        "agent_sessions",
+        status="success",
+        session_id=session_id,
+    )
     return sessions[session_id], False
 
 
@@ -83,15 +103,31 @@ def reset_session_agent(session_id: str, user_name: str):
     if session_id in sessions:
         sessions[session_id]["agent"] = None
         sessions[session_id]["memory"] = None
-        print(f"🔄 已重置 session {session_id} ({user_name}) 以清除損壞的對話歷史")
+        log_event(
+            "session_reset",
+            "agent_sessions",
+            level="warning",
+            status="success",
+            session_id=session_id,
+            reason="invalid_chat_history",
+        )
 
 
 async def clear_session(session_id: str):
     """手動清除指定 session（例如使用者執行 /clear）。"""
     with sessions_lock:
         if session_id in sessions:
-            user_name = sessions[session_id].get("user_name", "unknown")
             sessions.pop(session_id)
-            print(f"Session {session_id} ({user_name}) has been manually cleared.")
+            log_event(
+                "session_cleared",
+                "agent_sessions",
+                status="success",
+                session_id=session_id,
+            )
         else:
-            print(f"Session {session_id} not found, cannot clear.")
+            log_event(
+                "session_clear_skipped",
+                "agent_sessions",
+                status="not_found",
+                session_id=session_id,
+            )

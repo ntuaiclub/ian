@@ -18,6 +18,10 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
+import json
+
+import pytest
+
 from ian.services.service_supervisor import build_serve_commands, serve_all
 
 
@@ -51,7 +55,7 @@ def test_build_serve_commands_uses_cli_subcommands_in_startup_order():
     ]
 
 
-def test_serve_all_waits_for_mcp_before_starting_other_services():
+def test_serve_all_waits_for_mcp_before_starting_other_services(capsys):
     started = []
     health_checks = []
     processes = [FakeProcess(), FakeProcess(), FakeProcess(), FakeProcess(returncode=0)]
@@ -89,3 +93,43 @@ def test_serve_all_waits_for_mcp_before_starting_other_services():
         ["ian", "discord"],
     ]
     assert [process.terminated for process in processes] == [True, True, True, False]
+    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert [entry["event"] for entry in entries] == [
+        "job_started",
+        "service_started",
+        "health_wait_started",
+        "service_ready",
+        "service_started",
+        "service_started",
+        "service_started",
+        "job_failed",
+    ]
+    assert [entry["service"] for entry in entries if "service" in entry] == [
+        "mcp",
+        "mcp",
+        "mcp",
+        "webhook",
+        "reminder",
+        "discord",
+        "discord",
+    ]
+    assert entries[-1]["status"] == "unexpected_exit"
+
+
+def test_serve_all_logs_health_failure_and_stops_started_process(capsys):
+    process = FakeProcess()
+
+    def fail_health(_url, _timeout):
+        raise TimeoutError("private health URL")
+
+    with pytest.raises(TimeoutError, match="private health URL"):
+        serve_all(
+            popen_factory=lambda _command: process,
+            wait_for_http=fail_health,
+        )
+
+    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert entries[-1]["event"] == "job_failed"
+    assert entries[-1]["error_type"] == "TimeoutError"
+    assert "private health URL" not in json.dumps(entries)
+    assert process.terminated is True
