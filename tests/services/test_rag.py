@@ -18,12 +18,231 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
-from ian.services.rag import SimpleBM25
+import hashlib
+
+import pytest
+from langchain_core.documents import Document
+
+from ian.services import rag
+
+
+@pytest.fixture(autouse=True)
+def reset_rag_helper_state(monkeypatch):
+    rag.load_jsonl_data.cache_clear()
+    rag.load_markdown_data.cache_clear()
+    monkeypatch.setattr(rag, "bm25_system", None)
+    monkeypatch.setattr(rag, "bm25_corpus", [])
+    monkeypatch.setattr(rag, "bm25_docs", [])
+    yield
+    rag.load_jsonl_data.cache_clear()
+    rag.load_markdown_data.cache_clear()
 
 
 def test_simple_bm25_scores_matching_document_higher():
-    bm25 = SimpleBM25([["ai", "course"], ["member", "fee"]])
+    bm25 = rag.SimpleBM25([["ai", "course"], ["member", "fee"]])
 
     scores = bm25.get_scores(["ai"])
 
     assert scores[0] > scores[1]
+
+
+def test_load_jsonl_data_reads_valid_nonempty_lines(tmp_path):
+    source = tmp_path / "source.jsonl"
+    source.write_text(
+        '{"type": "faq", "id": "faq-1"}\n\n'
+        '{"type": "paragraph", "id": "paragraph-1"}\n',
+        encoding="utf-8",
+    )
+
+    assert rag.load_jsonl_data(str(source)) == [
+        {"type": "faq", "id": "faq-1"},
+        {"type": "paragraph", "id": "paragraph-1"},
+    ]
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        pytest.param("missing.jsonl", None, id="missing-file"),
+        pytest.param("malformed.jsonl", "not-json\n", id="malformed-content"),
+    ],
+)
+def test_load_jsonl_data_returns_empty_for_unreadable_sources(
+    tmp_path, filename, content
+):
+    source = tmp_path / filename
+    if content is not None:
+        source.write_text(content, encoding="utf-8")
+
+    assert rag.load_jsonl_data(str(source)) == []
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        pytest.param("# NTUAI\n\nWelcome", "# NTUAI\n\nWelcome", id="valid-file"),
+        pytest.param(None, "", id="missing-file"),
+    ],
+)
+def test_load_markdown_data_handles_valid_and_missing_files(
+    tmp_path, content, expected
+):
+    source = tmp_path / "source.md"
+    if content is not None:
+        source.write_text(content, encoding="utf-8")
+
+    assert rag.load_markdown_data(str(source)) == expected
+
+
+@pytest.mark.parametrize(
+    ("item", "expected_type", "expected_parts"),
+    [
+        pytest.param(
+            {
+                "type": "faq",
+                "id": "faq-1",
+                "question": "How to join?",
+                "answer": "Complete the form.",
+                "tags": ["membership"],
+            },
+            "faq",
+            ("問題：How to join?", "答案：Complete the form.", "關鍵字：keyword"),
+            id="faq",
+        ),
+        pytest.param(
+            {
+                "type": "paragraph",
+                "id": "paragraph-1",
+                "path": "About / Mission",
+                "text": "Learn and build together.",
+            },
+            "paragraph",
+            ("分類：About / Mission", "內容：Learn and build together."),
+            id="paragraph",
+        ),
+        pytest.param(
+            {
+                "type": "entity",
+                "id": "entity-1",
+                "entity_type": "contact",
+                "name": "NTUAI",
+                "emails": ["club@example.test"],
+                "urls": ["https://example.test"],
+            },
+            "entity",
+            ("實體類型：contact", "名稱：NTUAI", "club@example.test", "https://example.test"),
+            id="entity",
+        ),
+    ],
+)
+def test_create_enhanced_documents_maps_jsonl_types(
+    monkeypatch, item, expected_type, expected_parts
+):
+    monkeypatch.setattr(rag, "extract_keywords", lambda _text: ["keyword"])
+
+    documents = rag.create_enhanced_documents([item], "")
+
+    assert len(documents) == 1
+    assert documents[0].metadata["type"] == expected_type
+    assert documents[0].metadata["id"] == item["id"]
+    assert all(part in documents[0].page_content for part in expected_parts)
+
+
+def test_create_enhanced_documents_maps_markdown_sections(monkeypatch):
+    monkeypatch.setattr(rag, "extract_keywords", lambda _text: ["keyword"])
+
+    documents = rag.create_enhanced_documents([], "# Introduction\nWelcome\n## Events\nWeekly talks")
+
+    assert [document.metadata["section_title"] for document in documents] == [
+        "Introduction",
+        "Events",
+    ]
+    assert all(document.metadata["type"] == "markdown_section" for document in documents)
+    assert "內容：## Events\nWeekly talks" in documents[1].page_content
+
+
+def _document(document_id: str, content: str) -> Document:
+    return Document(page_content=content, metadata={"id": document_id})
+
+
+def test_build_bm25_index_and_search_rank_matching_documents(monkeypatch):
+    source_documents = [
+        _document("course", "ai course workshop"),
+        _document("membership", "member fee payment"),
+        _document("community", "club community"),
+    ]
+    monkeypatch.setattr(rag, "documents", source_documents)
+    monkeypatch.setattr(rag.jieba, "cut", lambda text: text.split())
+
+    rag.build_bm25_index()
+    results = rag.bm25_search("member fee", top_k=2)
+
+    assert rag.bm25_docs == source_documents
+    assert rag.bm25_corpus == [
+        ["ai", "course", "workshop"],
+        ["member", "fee", "payment"],
+        ["club", "community"],
+    ]
+    assert results[0][0].metadata["id"] == "membership"
+    assert results[0][1] > results[1][1]
+    assert len(results) == 2
+
+
+@pytest.mark.parametrize("query", ["", "a"])
+def test_bm25_search_returns_empty_without_searchable_query(monkeypatch, query):
+    monkeypatch.setattr(rag, "bm25_system", rag.SimpleBM25([["course"]]))
+    monkeypatch.setattr(rag, "bm25_docs", [_document("course", "course")])
+    monkeypatch.setattr(rag.jieba, "cut", lambda text: text.split())
+
+    assert rag.bm25_search(query) == []
+
+
+def test_hybrid_search_combines_and_ranks_bm25_and_semantic_results(monkeypatch):
+    bm25_first = _document("bm25-first", "keyword match")
+    semantic_first = _document("semantic-first", "meaning match")
+    shared = _document("shared", "both match")
+
+    monkeypatch.setattr(
+        rag,
+        "bm25_search",
+        lambda query, top_k: [(bm25_first, 10.0), (shared, 5.0), (semantic_first, 0.0)],
+    )
+    monkeypatch.setattr(
+        rag,
+        "semantic_search",
+        lambda query, top_k: [(semantic_first, 0.0), (shared, 0.5), (bm25_first, 1.0)],
+    )
+
+    results = rag.hybrid_search("query", top_k=2, alpha=0.25)
+
+    assert [document.metadata["id"] for document, _score, _methods in results] == [
+        "semantic-first",
+        "shared",
+    ]
+    assert all(methods == "BM25+Semantic" for _document, _score, methods in results)
+    assert results[0][1] > results[1][1]
+
+
+@pytest.mark.parametrize(
+    ("jsonl_content", "markdown_content"),
+    [
+        pytest.param(b"jsonl", b"markdown", id="both-files"),
+        pytest.param(b"jsonl", None, id="missing-markdown"),
+        pytest.param(None, b"markdown", id="missing-jsonl"),
+        pytest.param(None, None, id="both-missing"),
+    ],
+)
+def test_compute_source_hash_uses_existing_files_only(
+    tmp_path, jsonl_content, markdown_content
+):
+    jsonl_path = tmp_path / "source.jsonl"
+    markdown_path = tmp_path / "source.md"
+    if jsonl_content is not None:
+        jsonl_path.write_bytes(jsonl_content)
+    if markdown_content is not None:
+        markdown_path.write_bytes(markdown_content)
+
+    result = rag._compute_source_hash(str(jsonl_path), str(markdown_path))
+
+    expected_content = (jsonl_content or b"") + (markdown_content or b"")
+    assert result == hashlib.md5(expected_content).hexdigest()
