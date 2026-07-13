@@ -18,34 +18,221 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
-from ian.services.notifications import format_staff_notification, is_staff_role
+from types import SimpleNamespace
+
+import pytest
+
+from ian.services import notifications
 
 
-def test_is_staff_role_matches_staff_keywords():
-    assert is_staff_role("技術部部員")
-    assert is_staff_role("社長")
-    assert not is_staff_role("一般社員")
+def _event(**overrides):
+    event = {
+        "title": "Demo",
+        "date": "2026/03/07",
+        "weekday": "六",
+        "time": "19:00",
+        "venue": "新生",
+        "speaker": "講者",
+        "outline": "大綱",
+        "target": "社員",
+        "livestream": "Y",
+        "recording": "N",
+        "online_link": "https://meet.example",
+        "slides": "https://slides.example",
+    }
+    event.update(overrides)
+    return event
 
 
-def test_format_staff_notification_includes_event_and_note():
-    message = format_staff_notification(
-        {
-            "title": "Demo",
-            "date": "2026/03/07",
-            "weekday": "六",
-            "time": "19:00",
-            "venue": "新生",
-            "speaker": "講者",
-            "outline": "大綱",
-            "target": "社員",
-            "livestream": "Y",
-            "recording": "N",
-            "online_link": "https://meet.example",
-            "slides": "",
-        },
-        note="請準時",
+@pytest.mark.parametrize(
+    ("role", "expected"),
+    [
+        pytest.param("技術部部員", True, id="department-member"),
+        pytest.param("社長", True, id="president"),
+        pytest.param("一般社員", False, id="regular-member"),
+        pytest.param("", False, id="empty-role"),
+    ],
+)
+def test_is_staff_role_matches_staff_keywords(role, expected):
+    assert notifications.is_staff_role(role) is expected
+
+
+@pytest.mark.parametrize(
+    ("delivery_results", "expected"),
+    [
+        pytest.param([], (0, 0), id="no-recipients"),
+        pytest.param([True, True], (2, 0), id="all-success"),
+        pytest.param([True, False, False], (1, 2), id="mixed-results"),
+    ],
+)
+def test_send_notification_to_members_aggregates_delivery_results(
+    monkeypatch, delivery_results, expected
+):
+    bound = [
+        {"discord_id": f"discord-{index}"}
+        for index, _result in enumerate(delivery_results)
+    ]
+    dm_calls = []
+    sleep_calls = []
+    results = iter(delivery_results)
+
+    monkeypatch.setattr(notifications, "get_valid_bound_members", lambda _members: bound)
+    monkeypatch.setattr(
+        notifications,
+        "send_discord_dm",
+        lambda discord_id, message: dm_calls.append((discord_id, message))
+        or next(results),
+    )
+    monkeypatch.setattr(notifications.time, "sleep", sleep_calls.append)
+
+    result = notifications.send_notification_to_members("Notice", [{"raw": "member"}])
+
+    discord_ok, discord_fail = expected
+    assert result == {
+        "total_members": len(bound),
+        "discord_ok": discord_ok,
+        "discord_fail": discord_fail,
+    }
+    assert dm_calls == [
+        (f"discord-{index}", "Notice") for index in range(len(delivery_results))
+    ]
+    assert sleep_calls == [0.5] * len(delivery_results)
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected"),
+    [
+        pytest.param(200, True, id="ok"),
+        pytest.param(201, True, id="created"),
+        pytest.param(400, False, id="bad-request"),
+        pytest.param(500, False, id="server-error"),
+    ],
+)
+def test_send_discord_channel_message_handles_response_statuses(
+    monkeypatch, status_code, expected
+):
+    calls = []
+    monkeypatch.setattr(
+        notifications.discord_api,
+        "send_channel_message",
+        lambda channel_id, message: calls.append((channel_id, message))
+        or SimpleNamespace(status_code=status_code, text="response body"),
     )
 
-    assert "Demo" in message
-    assert "線上直播" in message
-    assert "請準時" in message
+    assert notifications.send_discord_channel_message("channel-1", "Notice") is expected
+    assert calls == [("channel-1", "Notice")]
+
+
+def test_send_discord_channel_message_handles_api_exception(monkeypatch):
+    def fail(*_args):
+        raise RuntimeError("Discord unavailable")
+
+    monkeypatch.setattr(notifications.discord_api, "send_channel_message", fail)
+
+    assert notifications.send_discord_channel_message("channel-1", "Notice") is False
+
+
+@pytest.mark.parametrize(
+    ("token", "channel_id"),
+    [
+        pytest.param("", "channel-1", id="missing-token"),
+        pytest.param("token", "", id="missing-channel"),
+        pytest.param("", "", id="missing-token-and-channel"),
+    ],
+)
+def test_send_log_is_noop_when_not_configured(monkeypatch, token, channel_id):
+    monkeypatch.setattr(notifications, "DISCORD_BOT_TOKEN", token)
+    monkeypatch.setattr(notifications, "LOG_CHANNEL_ID", channel_id)
+    monkeypatch.setattr(
+        notifications,
+        "send_discord_channel_message",
+        lambda *_: (_ for _ in ()).throw(AssertionError("Discord should not be called")),
+    )
+
+    assert notifications.send_log("log message") is None
+
+
+def test_send_log_delegates_when_configured(monkeypatch):
+    calls = []
+    monkeypatch.setattr(notifications, "DISCORD_BOT_TOKEN", "token")
+    monkeypatch.setattr(notifications, "LOG_CHANNEL_ID", "log-channel")
+    monkeypatch.setattr(
+        notifications,
+        "send_discord_channel_message",
+        lambda channel_id, message: calls.append((channel_id, message)) or True,
+    )
+
+    notifications.send_log("log message")
+
+    assert calls == [("log-channel", "log message")]
+
+
+def test_format_staff_notification_includes_event_details_and_note():
+    message = notifications.format_staff_notification(_event(), note="請準時")
+
+    for expected in (
+        "=== Demo ===",
+        "日期: 2026/03/07 六",
+        "時間: 19:00",
+        "地點: 新生",
+        "講者: 講者",
+        "對象: 社員",
+        "備註: 線上直播",
+        "課程大綱:\n大綱",
+        "線上連結: https://meet.example",
+        "講義: https://slides.example",
+        "--- 附註 ---\n請準時",
+    ):
+        assert expected in message
+
+
+def test_format_staff_notification_omits_empty_optional_fields():
+    message = notifications.format_staff_notification(
+        _event(
+            time="",
+            venue="",
+            speaker="",
+            outline="",
+            target="",
+            livestream="N",
+            recording="N",
+            online_link="",
+            slides="",
+        )
+    )
+
+    for omitted in (
+        "時間:",
+        "地點:",
+        "講者:",
+        "對象:",
+        "備註:",
+        "課程大綱:",
+        "線上連結:",
+        "講義:",
+        "附註",
+    ):
+        assert omitted not in message
+
+
+@pytest.mark.parametrize(
+    ("livestream", "recording", "expected"),
+    [
+        pytest.param("Y", "N", "備註: 線上直播", id="livestream"),
+        pytest.param("N", "Y", "備註: 提供錄影", id="recording"),
+        pytest.param("Y", "Y", "備註: 線上直播 / 提供錄影", id="both"),
+    ],
+)
+def test_format_staff_notification_combines_flags(livestream, recording, expected):
+    message = notifications.format_staff_notification(
+        _event(livestream=livestream, recording=recording)
+    )
+
+    assert expected in message
+
+
+def test_format_staff_notification_truncates_long_outline():
+    message = notifications.format_staff_notification(_event(outline="x" * 301))
+
+    assert f"課程大綱:\n{'x' * 300}..." in message
+    assert "x" * 301 not in message
