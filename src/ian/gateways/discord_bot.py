@@ -20,6 +20,7 @@
 
 import os
 import json
+import time
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -33,9 +34,14 @@ from ian.services.agent import (
     clear_session,
 )
 from ian.services.member_store import get_member_role as get_member_role_from_db, init as init_member_db
+from ian.utils.logging import elapsed_ms, hash_identifier, log_event
 
 UPLOAD_DIR = "uploads"
 CHAT_HISTORY_FILE = os.path.join(UPLOAD_DIR, "chat_history.jsonl")
+
+
+def _interaction_correlation_id(interaction: discord.Interaction) -> str:
+    return hash_identifier(getattr(interaction, "id", None) or interaction.user.id)
 
 
 def save_chat_history(sender_id, user_name, user_message, bot_response):
@@ -55,7 +61,16 @@ def save_chat_history(sender_id, user_name, user_message, bot_response):
         with open(CHAT_HISTORY_FILE, "a", encoding="utf-8") as f:
             f.write(json.dumps(new_entry, ensure_ascii=False) + "\n")
     except Exception as e:
-        print(f"Error saving chat history: {e}")
+        log_event(
+            "job_failed",
+            "discord_bot",
+            level="error",
+            platform="Discord",
+            status="error",
+            job="save_chat_history",
+            sender_id=sender_id,
+            error=e,
+        )
 
 
 # FAQ 按鈕視圖
@@ -64,6 +79,8 @@ class FAQView(discord.ui.View):
         super().__init__(timeout=None)
 
     async def ask_llm(self, interaction: discord.Interaction, prompt: str):
+        started_at = time.monotonic()
+        correlation_id = _interaction_correlation_id(interaction)
         await interaction.response.defer(ephemeral=True)
 
         user = interaction.user
@@ -73,7 +90,27 @@ class FAQView(discord.ui.View):
 
         current_time = get_current_time()
 
+        log_event(
+            "request_received",
+            "discord_bot",
+            platform="Discord",
+            status="accepted",
+            correlation_id=correlation_id,
+            interaction_id=getattr(interaction, "id", None),
+            user_id=str(user.id),
+            channel_id=str(interaction.channel_id),
+            source="faq",
+            message_length=len(prompt),
+        )
         try:
+            log_event(
+                "agent_invoked",
+                "discord_bot",
+                platform="Discord",
+                status="started",
+                correlation_id=correlation_id,
+                user_id=str(user.id),
+            )
             agent_result = await run_agent_message_flow(
                 session_id=user.name,
                 user_name=user.display_name,
@@ -85,15 +122,43 @@ class FAQView(discord.ui.View):
                 account_id=str(user.id),
             )
             if not agent_result.should_reply:
-                print("Discord: Agent 決定不回覆此訊息")
+                log_event(
+                    "no_response",
+                    "discord_bot",
+                    platform="Discord",
+                    status="success",
+                    duration_ms=elapsed_ms(started_at),
+                    correlation_id=correlation_id,
+                    user_id=str(user.id),
+                    reason="agent_decision",
+                )
                 if agent_result.reaction_emoji:
                     await interaction.followup.send(agent_result.reaction_emoji)
                 return
             await interaction.followup.send(agent_result.text)
+            log_event(
+                "reply_sent",
+                "discord_bot",
+                platform="Discord",
+                status="success",
+                duration_ms=elapsed_ms(started_at),
+                correlation_id=correlation_id,
+                user_id=str(user.id),
+            )
 
         except Exception as e:
             await interaction.followup.send("⚠️ Error.")
-            print(f"Error processing FAQ button: {e}")
+            log_event(
+                "request_failed",
+                "discord_bot",
+                level="error",
+                platform="Discord",
+                status="error",
+                duration_ms=elapsed_ms(started_at),
+                correlation_id=correlation_id,
+                user_id=str(user.id),
+                error=e,
+            )
 
     @discord.ui.button(
         label="社課時間？", style=discord.ButtonStyle.secondary, custom_id="faq_time"
@@ -126,9 +191,23 @@ class FAQView(discord.ui.View):
 # Initialize member database
 try:
     init_member_db()
-    print("社員資料庫已初始化 (discord_chatbot)")
+    log_event(
+        "job_completed",
+        "discord_bot",
+        platform="Discord",
+        status="success",
+        job="member_store_initialization",
+    )
 except Exception as e:
-    print(f"社員資料庫初始化失敗: {e}")
+    log_event(
+        "job_failed",
+        "discord_bot",
+        level="error",
+        platform="Discord",
+        status="error",
+        job="member_store_initialization",
+        error=e,
+    )
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -139,11 +218,19 @@ async def on_ready():
     await bot.tree.sync()
     start_log_processor()
     send_startup_notification()
-    print(f"Bot 已上線：{bot.user}")
+    log_event(
+        "service_ready",
+        "discord_bot",
+        platform="Discord",
+        status="ready",
+        service="discord_bot",
+    )
 
 @bot.tree.command(name="ask", description="Ask Avatar.")
 @app_commands.describe(prompt="歡迎詢問 NTUAI! Ask anything about NTUAI!")
 async def ask(interaction: discord.Interaction, prompt: str):
+    started_at = time.monotonic()
+    correlation_id = _interaction_correlation_id(interaction)
     user = interaction.user
 
     db_role = get_member_role_from_db("Discord", str(user.id))
@@ -152,12 +239,28 @@ async def ask(interaction: discord.Interaction, prompt: str):
     current_time = get_current_time()
     await interaction.response.defer()
 
-    print(
-        f"\n---\n{current_time['nowdatetime']} {interaction.channel} ({interaction.channel_id})\n"
-        f"{user.display_name} ({user.global_name}, {user.name}, {roles})\n詢問：{prompt}\n"
+    log_event(
+        "request_received",
+        "discord_bot",
+        platform="Discord",
+        status="accepted",
+        correlation_id=correlation_id,
+        interaction_id=getattr(interaction, "id", None),
+        user_id=str(user.id),
+        channel_id=str(interaction.channel_id),
+        source="slash_command",
+        message_length=len(prompt),
     )
 
     try:
+        log_event(
+            "agent_invoked",
+            "discord_bot",
+            platform="Discord",
+            status="started",
+            correlation_id=correlation_id,
+            user_id=str(user.id),
+        )
         agent_result = await run_agent_message_flow(
             session_id=user.name,
             user_name=user.display_name,
@@ -169,17 +272,44 @@ async def ask(interaction: discord.Interaction, prompt: str):
             account_id=str(user.id),
         )
         if not agent_result.should_reply:
-            print("Discord: Agent 決定不回覆此訊息")
+            log_event(
+                "no_response",
+                "discord_bot",
+                platform="Discord",
+                status="success",
+                duration_ms=elapsed_ms(started_at),
+                correlation_id=correlation_id,
+                user_id=str(user.id),
+                reason="agent_decision",
+            )
             if agent_result.reaction_emoji:
                 await interaction.followup.send(agent_result.reaction_emoji)
             return
         await interaction.followup.send(agent_result.text)
         save_chat_history(user.name, user.display_name, prompt, agent_result.text)
-        print("Message processed successfully")
+        log_event(
+            "reply_sent",
+            "discord_bot",
+            platform="Discord",
+            status="success",
+            duration_ms=elapsed_ms(started_at),
+            correlation_id=correlation_id,
+            user_id=str(user.id),
+        )
 
     except Exception as e:
         await interaction.followup.send("⚠️ Error.")
-        print(f"Error processing message: {e}")
+        log_event(
+            "request_failed",
+            "discord_bot",
+            level="error",
+            platform="Discord",
+            status="error",
+            duration_ms=elapsed_ms(started_at),
+            correlation_id=correlation_id,
+            user_id=str(user.id),
+            error=e,
+        )
 
 @bot.tree.command(name="faq", description="常見問題")
 async def faq(interaction: discord.Interaction):
@@ -189,15 +319,34 @@ async def faq(interaction: discord.Interaction):
 
 @bot.tree.command(name="clear", description="清除記憶")
 async def clear(interaction: discord.Interaction):
+    correlation_id = _interaction_correlation_id(interaction)
     try:
         await clear_session(interaction.user.name)
         await interaction.response.send_message("🫥 已清除記憶，請開始新的對話。\nCleared. Please start a new conversation.")
     except Exception as e:
         await interaction.response.send_message("⚠️ Error.")
-        print(f"Error clearing session: {e}")
+        log_event(
+            "request_failed",
+            "discord_bot",
+            level="error",
+            platform="Discord",
+            status="error",
+            correlation_id=correlation_id,
+            user_id=str(interaction.user.id),
+            operation="clear_session",
+            error=e,
+        )
 
 def entrypoint():
     if not DISCORD_BOT_TOKEN:
-        print("Error: DISCORD_BOT_TOKEN not found in environment variables.")
+        log_event(
+            "job_failed",
+            "discord_bot",
+            level="critical",
+            platform="Discord",
+            status="error",
+            job="bot_startup",
+            reason="missing_bot_token",
+        )
         raise SystemExit(1)
     bot.run(DISCORD_BOT_TOKEN)

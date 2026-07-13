@@ -24,6 +24,8 @@ from collections.abc import Callable, Sequence
 from urllib.error import URLError
 from urllib.request import urlopen
 
+from ian.utils.logging import elapsed_ms, log_event
+
 
 Command = list[str]
 
@@ -72,26 +74,82 @@ def serve_all(
 ) -> int:
     commands = build_serve_commands(mcp_port=mcp_port)
     processes: list[subprocess.Popen] = []
+    started_at = time.monotonic()
 
     try:
-        print("Starting MCP server in HTTP mode...")
+        log_event(
+            "job_started",
+            "service_supervisor",
+            status="started",
+            job="serve_all",
+        )
         processes.append(popen_factory(commands[0]))
+        log_event(
+            "service_started",
+            "service_supervisor",
+            status="starting",
+            service="mcp",
+        )
 
-        print("Waiting for MCP server to initialize...")
+        log_event(
+            "health_wait_started",
+            "service_supervisor",
+            status="waiting",
+            service="mcp",
+            timeout_seconds=health_timeout,
+        )
         wait_for_http(f"http://localhost:{mcp_port}/health", health_timeout)
-        print("MCP server is ready!")
+        log_event(
+            "service_ready",
+            "service_supervisor",
+            status="ready",
+            service="mcp",
+        )
 
         for command in commands[1:]:
-            print(f"Starting {' '.join(command[1:])}...")
             processes.append(popen_factory(command))
+            log_event(
+                "service_started",
+                "service_supervisor",
+                status="starting",
+                service=command[1],
+            )
 
         while True:
-            for process in processes:
+            for index, process in enumerate(processes):
                 returncode = process.poll()
                 if returncode is not None:
+                    log_event(
+                        "job_failed",
+                        "service_supervisor",
+                        level="error",
+                        status="unexpected_exit",
+                        duration_ms=elapsed_ms(started_at),
+                        job="serve_all",
+                        service=commands[index][1],
+                        return_code=returncode,
+                    )
                     return returncode
             sleep(1)
     except KeyboardInterrupt:
+        log_event(
+            "job_completed",
+            "service_supervisor",
+            status="interrupted",
+            duration_ms=elapsed_ms(started_at),
+            job="serve_all",
+        )
         return 130
+    except Exception as e:
+        log_event(
+            "job_failed",
+            "service_supervisor",
+            level="error",
+            status="error",
+            duration_ms=elapsed_ms(started_at),
+            job="serve_all",
+            error=e,
+        )
+        raise
     finally:
         stop_processes(processes)

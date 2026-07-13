@@ -18,7 +18,8 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
-from datetime import datetime, timezone, timedelta
+import json
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import pytest
@@ -62,9 +63,7 @@ def test_run_once_logs_fetch_failure_without_loading_members(monkeypatch):
 
     reminder_runner.run_once(target_date=TARGET_DATE)
 
-    assert logs == [
-        "```\n[REMINDER] FAILED to fetch course data: sheet unavailable\n```"
-    ]
+    assert logs == ["```\n[REMINDER] FAILED to fetch course data\n```"]
 
 
 def test_run_once_with_no_events_does_not_load_members_or_send_messages(monkeypatch):
@@ -89,7 +88,7 @@ def test_run_once_with_no_events_does_not_load_members_or_send_messages(monkeypa
     reminder_runner.run_once(target_date=TARGET_DATE)
 
 
-def test_run_once_dry_run_lists_recipients_without_sending_messages(
+def test_run_once_dry_run_logs_counts_without_recipient_details(
     monkeypatch, capsys
 ):
     members = [{"name": "Alice"}, {"name": "Bob"}]
@@ -117,10 +116,13 @@ def test_run_once_dry_run_lists_recipients_without_sending_messages(
 
     reminder_runner.run_once(target_date=TARGET_DATE, dry=True)
 
-    captured = capsys.readouterr()
-    assert "Would notify 2 member(s)" in captured.err
-    assert "Alice (Discord)" in captured.err
-    assert "Bob (Discord)" in captured.err
+    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    completed = entries[-1]
+    assert completed["event"] == "job_completed"
+    assert completed["status"] == "dry_run"
+    assert completed["recipient_count"] == 2
+    assert "Alice" not in json.dumps(entries)
+    assert "discord-1" not in json.dumps(entries)
 
 
 def test_run_once_sends_personalized_messages_and_reports_counts(monkeypatch):
@@ -190,12 +192,41 @@ def test_run_once_logs_member_load_failure_without_sending_messages(monkeypatch)
 
     reminder_runner.run_once(target_date=TARGET_DATE)
 
-    assert logs == [
-        "```\n[REMINDER] FAILED to load member data: invalid member JSON\n```"
-    ]
+    assert logs == ["```\n[REMINDER] FAILED to load member data\n```"]
 
 
-def test_run_once_continues_after_one_dm_raises(monkeypatch):
+@pytest.mark.parametrize("failure_stage", ["find_events", "format_message"])
+def test_run_once_logs_event_preparation_failures(
+    monkeypatch, capsys, failure_stage
+):
+    logs = []
+    monkeypatch.setattr(reminder_runner, "fetch_course_data", pd.DataFrame)
+    monkeypatch.setattr(reminder_runner, "send_log", logs.append)
+    if failure_stage == "find_events":
+        monkeypatch.setattr(
+            reminder_runner,
+            "find_events_on_date",
+            lambda *_args: (_ for _ in ()).throw(ValueError("private event detail")),
+        )
+    else:
+        monkeypatch.setattr(reminder_runner, "find_events_on_date", lambda *_: EVENTS)
+        monkeypatch.setattr(
+            reminder_runner,
+            "format_reminder_message",
+            lambda *_args: (_ for _ in ()).throw(ValueError("private event detail")),
+        )
+
+    reminder_runner.run_once(target_date=TARGET_DATE)
+
+    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert entries[-1]["event"] == "job_failed"
+    assert entries[-1]["stage"] == "prepare_events"
+    assert entries[-1]["error_type"] == "ValueError"
+    assert "private event detail" not in json.dumps(entries)
+    assert logs == ["```\n[REMINDER] FAILED to prepare event data\n```"]
+
+
+def test_run_once_continues_after_one_dm_raises(monkeypatch, capsys):
     bound = [
         {"name": "Alice", "email": "alice@example.test", "discord_id": "bad"},
         {"name": "Bob", "email": "bob@example.test", "discord_id": "good"},
@@ -218,6 +249,13 @@ def test_run_once_continues_after_one_dm_raises(monkeypatch):
 
     assert attempted == ["bad", "good"]
     assert "Discord: 1 sent, 1 failed" in logs[0]
+    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    failure = next(
+        entry for entry in entries if entry["event"] == "external_send_failure"
+    )
+    assert failure["error_type"] == "TimeoutError"
+    assert "bad" not in json.dumps(entries)
+    assert "Discord timeout" not in json.dumps(entries)
 
 
 def test_run_once_with_no_recipients_reports_zero_counts(monkeypatch):

@@ -19,6 +19,7 @@
 #
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -38,7 +39,7 @@ def _event(text, *, group_id=None):
     )
 
 
-def test_handle_line_message_skips_non_whitelisted_group(monkeypatch):
+def test_handle_line_message_skips_non_whitelisted_group(monkeypatch, capsys):
     monkeypatch.setattr(line_webhook, "LINE_ALLOWED_GROUPS", ["allowed-group"])
     monkeypatch.setattr(
         line_webhook.line_bot_api,
@@ -63,6 +64,11 @@ def test_handle_line_message_skips_non_whitelisted_group(monkeypatch):
     )
 
     assert line_webhook.handle_line_message(_event("hello", group_id="blocked")) is None
+    entry = json.loads(capsys.readouterr().err)
+    assert entry["event"] == "request_ignored"
+    assert entry["status"] == "unauthorized"
+    assert "blocked" not in json.dumps(entry)
+    assert "user-1" not in json.dumps(entry)
 
 
 @pytest.mark.parametrize("text", ["", "   "])
@@ -124,7 +130,9 @@ def _stub_line_task(monkeypatch, agent_result):
         ),
     ],
 )
-def test_process_line_message_task_skips_no_reply_results(monkeypatch, agent_result):
+def test_process_line_message_task_skips_no_reply_results(
+    monkeypatch, capsys, agent_result
+):
     replies, history = _stub_line_task(monkeypatch, agent_result)
 
     asyncio.run(
@@ -135,9 +143,13 @@ def test_process_line_message_task_skips_no_reply_results(monkeypatch, agent_res
 
     assert replies == []
     assert history == []
+    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert [entry["event"] for entry in entries] == ["agent_invoked", "no_response"]
+    assert "user-1" not in json.dumps(entries)
+    assert "hello" not in json.dumps(entries)
 
 
-def test_process_line_message_task_replies_with_message_chunks(monkeypatch):
+def test_process_line_message_task_replies_with_message_chunks(monkeypatch, capsys):
     response = "x" * 2001
     replies, history = _stub_line_task(
         monkeypatch,
@@ -155,3 +167,42 @@ def test_process_line_message_task_replies_with_message_chunks(monkeypatch):
     assert token == "reply-token"
     assert [message.text for message in messages] == ["x" * 2000, "x"]
     assert history == [("user-1", "Alice", "hello", response, "LINE")]
+    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert [entry["event"] for entry in entries] == ["agent_invoked", "reply_sent"]
+    assert entries[-1]["message_count"] == 2
+    assert "user-1" not in json.dumps(entries)
+    assert "hello" not in json.dumps(entries)
+
+
+def test_process_line_message_task_logs_reply_failure_without_private_data(
+    monkeypatch, capsys
+):
+    _replies, history = _stub_line_task(
+        monkeypatch,
+        AgentMessageResult(text="private agent reply", should_reply=True),
+    )
+    monkeypatch.setattr(
+        line_webhook.line_bot_api,
+        "reply_message",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("private LINE detail")),
+    )
+
+    asyncio.run(
+        line_webhook.process_line_message_task(
+            "reply-token", "user-1", "private question", "chat-1", "1on1"
+        )
+    )
+
+    assert history == []
+    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert entries[-1]["event"] == "external_send_failure"
+    assert entries[-1]["error_type"] == "RuntimeError"
+    for sensitive in (
+        "reply-token",
+        "user-1",
+        "chat-1",
+        "private question",
+        "private agent reply",
+        "private LINE detail",
+    ):
+        assert sensitive not in json.dumps(entries)

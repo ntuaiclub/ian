@@ -23,6 +23,7 @@ import json
 import math
 import os
 import re
+import time
 from collections import Counter
 from functools import lru_cache
 from typing import Any, Dict, List, Tuple
@@ -35,7 +36,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from ian.config import CACHE_DIR, DATA_DIR
-from ian.utils.console import eprint
+from ian.utils.logging import elapsed_ms, log_event
 
 
 vector_store = None
@@ -103,9 +104,23 @@ def load_jsonl_data(file_path: str) -> List[Dict[str, Any]]:
                 if line:
                     data.append(json.loads(line))
     except FileNotFoundError:
-        eprint(f"檔案不存在: {file_path}")
+        log_event(
+            "operation_failed",
+            "rag",
+            level="warning",
+            status="failure",
+            operation="load_jsonl",
+            reason="file_not_found",
+        )
     except Exception as e:
-        eprint(f"載入 JSONL 檔案錯誤: {e}")
+        log_event(
+            "operation_failed",
+            "rag",
+            level="error",
+            status="error",
+            operation="load_jsonl",
+            error=e,
+        )
     return data
 
 
@@ -115,10 +130,24 @@ def load_markdown_data(file_path: str) -> str:
         with open(file_path, "r", encoding="utf-8") as f:
             return f.read()
     except FileNotFoundError:
-        eprint(f"檔案不存在: {file_path}")
+        log_event(
+            "operation_failed",
+            "rag",
+            level="warning",
+            status="failure",
+            operation="load_markdown",
+            reason="file_not_found",
+        )
         return ""
     except Exception as e:
-        eprint(f"載入 Markdown 檔案錯誤: {e}")
+        log_event(
+            "operation_failed",
+            "rag",
+            level="error",
+            status="error",
+            operation="load_markdown",
+            error=e,
+        )
         return ""
 
 
@@ -293,7 +322,13 @@ def build_bm25_index():
         bm25_docs.append(doc)
 
     bm25_system = SimpleBM25(bm25_corpus)
-    eprint(f"BM25 索引建立完成: {len(bm25_corpus)} 個文檔")
+    log_event(
+        "operation_completed",
+        "rag",
+        status="success",
+        operation="build_bm25_index",
+        document_count=len(bm25_corpus),
+    )
 
 
 def bm25_search(query: str, top_k: int = 10) -> List[Tuple[Document, float]]:
@@ -407,10 +442,22 @@ def _try_load_faiss_index():
             embedding_model,
             allow_dangerous_deserialization=True,
         )
-        eprint("[快取] 從本地快取載入 FAISS 索引")
+        log_event(
+            "operation_completed",
+            "rag",
+            status="success",
+            operation="load_faiss_cache",
+        )
         return True
     except Exception as e:
-        eprint(f"[快取] 載入 FAISS 索引失敗: {e}")
+        log_event(
+            "operation_failed",
+            "rag",
+            level="warning",
+            status="failure",
+            operation="load_faiss_cache",
+            error=e,
+        )
         return False
 
 
@@ -418,9 +465,21 @@ def _save_faiss_index():
     try:
         os.makedirs(FAISS_INDEX_DIR, exist_ok=True)
         vector_store.save_local(FAISS_INDEX_DIR)
-        eprint("[快取] FAISS 索引已儲存到本地快取")
+        log_event(
+            "operation_completed",
+            "rag",
+            status="success",
+            operation="save_faiss_cache",
+        )
     except Exception as e:
-        eprint(f"[快取] 儲存 FAISS 索引失敗: {e}")
+        log_event(
+            "operation_failed",
+            "rag",
+            level="warning",
+            status="failure",
+            operation="save_faiss_cache",
+            error=e,
+        )
 
 
 def _try_move_faiss_to_gpu():
@@ -433,26 +492,69 @@ def _try_move_faiss_to_gpu():
             cpu_index = vector_store.index
             gpu_index = faiss_lib.index_cpu_to_gpu(gpu_res, 0, cpu_index)
             vector_store.index = gpu_index
-            eprint(f"[GPU] FAISS 索引已載入 GPU (共 {faiss_lib.get_num_gpus()} 個 GPU)")
+            log_event(
+                "operation_completed",
+                "rag",
+                status="success",
+                operation="move_faiss_to_gpu",
+                gpu_count=faiss_lib.get_num_gpus(),
+            )
             return True
-        eprint("[GPU] 未偵測到可用的 GPU，使用 CPU 模式")
+        log_event(
+            "operation_completed",
+            "rag",
+            status="cpu_fallback",
+            operation="move_faiss_to_gpu",
+            gpu_count=0,
+        )
         return False
     except Exception as e:
-        eprint(f"[GPU] 無法將 FAISS 索引移到 GPU: {e}")
+        log_event(
+            "operation_failed",
+            "rag",
+            level="warning",
+            status="failure",
+            operation="move_faiss_to_gpu",
+            error=e,
+        )
         return False
 
 
 def initialize_rag_system():
     global vector_store, embedding_model, documents
 
-    jieba.initialize()
+    started_at = time.monotonic()
+    log_event("job_started", "rag", status="started", job="rag_initialization")
+    try:
+        jieba.initialize()
+    except Exception as e:
+        log_event(
+            "job_failed",
+            "rag",
+            level="error",
+            status="error",
+            duration_ms=elapsed_ms(started_at),
+            job="rag_initialization",
+            stage="tokenizer",
+            error=e,
+        )
+        return False
+
     try:
         embedding_model = HuggingFaceEmbeddings(
             model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
         )
-        eprint("多語言嵌入模型初始化完成")
     except Exception as e:
-        eprint(f"嵌入模型初始化失敗: {e}")
+        log_event(
+            "job_failed",
+            "rag",
+            level="error",
+            status="error",
+            duration_ms=elapsed_ms(started_at),
+            job="rag_initialization",
+            stage="embedding_model",
+            error=e,
+        )
         return False
 
     jsonl_file_path = str(DATA_DIR / "ntuai_recompiled_index.jsonl")
@@ -464,19 +566,22 @@ def initialize_rag_system():
         use_cache = (current_hash == saved_hash) and os.path.exists(FAISS_INDEX_DIR)
 
         if use_cache:
-            eprint(f"[快取] 來源檔案未變更 (hash: {current_hash[:8]}...)，嘗試載入快取")
             if _try_load_faiss_index():
                 jsonl_data = load_jsonl_data(jsonl_file_path)
                 md_content = load_markdown_data(md_file_path)
                 documents = create_enhanced_documents(jsonl_data, md_content)
                 build_bm25_index()
                 _try_move_faiss_to_gpu()
+                log_event(
+                    "job_completed",
+                    "rag",
+                    status="success",
+                    duration_ms=elapsed_ms(started_at),
+                    job="rag_initialization",
+                    source="cache",
+                    document_count=len(documents),
+                )
                 return True
-            eprint("[快取] 快取載入失敗，重建索引")
-        elif saved_hash:
-            eprint(f"[快取] 來源檔案已變更 (舊: {saved_hash[:8]}... → 新: {current_hash[:8]}...)，重建索引")
-        else:
-            eprint(f"[快取] 首次建立索引 (hash: {current_hash[:8]}...)")
 
         jsonl_data = load_jsonl_data(jsonl_file_path)
         md_content = load_markdown_data(md_file_path)
@@ -484,17 +589,43 @@ def initialize_rag_system():
 
         if documents:
             vector_store = FAISS.from_documents(documents, embedding_model)
-            eprint(f"向量資料庫建立完成, 包含 {len(documents)} 個文檔")
             _save_faiss_index()
             _save_hash(current_hash)
             build_bm25_index()
             _try_move_faiss_to_gpu()
+            log_event(
+                "job_completed",
+                "rag",
+                status="success",
+                duration_ms=elapsed_ms(started_at),
+                job="rag_initialization",
+                source="rebuilt",
+                document_count=len(documents),
+            )
             return True
 
-        eprint("沒有找到任何文檔資料")
+        log_event(
+            "job_failed",
+            "rag",
+            level="warning",
+            status="failure",
+            duration_ms=elapsed_ms(started_at),
+            job="rag_initialization",
+            stage="load_documents",
+            reason="no_documents",
+        )
         return False
     except Exception as e:
-        eprint(f"初始化過程發生錯誤: {e}")
+        log_event(
+            "job_failed",
+            "rag",
+            level="error",
+            status="error",
+            duration_ms=elapsed_ms(started_at),
+            job="rag_initialization",
+            stage="build_index",
+            error=e,
+        )
         return False
 
 

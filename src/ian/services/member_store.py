@@ -36,7 +36,7 @@ from ian.domain.members import (
 )
 from ian.services.member_api import MemberApiError, fetch_members, update_member_fields
 from ian.services.member_cache import MemberCache
-from ian.utils.console import eprint
+from ian.utils.logging import elapsed_ms, log_event
 
 
 # ---------------------------------------------------------------------------
@@ -49,19 +49,37 @@ _cache = MemberCache(MEMBER_DB_FILE)
 # ---------------------------------------------------------------------------
 def sync_member_data() -> bool:
     """Fetch latest member data from API and save to local file."""
+    started_at = time.monotonic()
+    log_event(
+        "job_started",
+        "member_store",
+        status="started",
+        job="member_sync",
+    )
     try:
-        eprint("[MemberDB] Syncing member data from API...")
         data = fetch_members(MEMBER_API_URL, MEMBER_API_KEY)
         _cache.replace_all(data)
         _cache.save()
 
-        eprint(f"[MemberDB] Synced {len(data)} members successfully")
+        log_event(
+            "job_completed",
+            "member_store",
+            status="success",
+            duration_ms=elapsed_ms(started_at),
+            job="member_sync",
+            member_count=len(data),
+        )
         return True
-    except MemberApiError as e:
-        eprint(f"[MemberDB] Sync failed: {e}")
-        return False
     except Exception as e:
-        eprint(f"[MemberDB] Sync failed: {e}")
+        log_event(
+            "job_failed",
+            "member_store",
+            level="error",
+            status="error",
+            duration_ms=elapsed_ms(started_at),
+            job="member_sync",
+            error=e,
+        )
         return False
 
 
@@ -70,12 +88,32 @@ def load_member_db() -> bool:
     try:
         data = _cache.load()
         if data is None:
-            eprint("[MemberDB] Local DB file not found, attempting sync...")
+            log_event(
+                "operation_failed",
+                "member_store",
+                level="warning",
+                status="fallback",
+                operation="load_member_cache",
+                reason="file_not_found",
+            )
             return sync_member_data()
-        eprint(f"[MemberDB] Loaded {len(data)} members from local file")
+        log_event(
+            "operation_completed",
+            "member_store",
+            status="success",
+            operation="load_member_cache",
+            member_count=len(data),
+        )
         return True
     except Exception as e:
-        eprint(f"[MemberDB] Failed to load local DB: {e}")
+        log_event(
+            "operation_failed",
+            "member_store",
+            level="error",
+            status="error",
+            operation="load_member_cache",
+            error=e,
+        )
         return False
 
 
@@ -221,7 +259,15 @@ def bind_email(email: str, platform: str, account_id: str) -> dict:
     try:
         _cache.save()
     except Exception as e:
-        eprint(f"[MemberDB] Failed to save local DB after binding: {e}")
+        log_event(
+            "operation_failed",
+            "member_store",
+            level="error",
+            status="error",
+            operation="save_member_cache",
+            source="bind_email",
+            error=e,
+        )
 
     name = member.get("id", "")
     role = get_role_from_tier(member.get("Tier", ""))
@@ -262,7 +308,15 @@ def _update_member_field(email: str, field: str, value: str) -> dict:
     try:
         _cache.save()
     except Exception as e:
-        eprint(f"[MemberDB] Failed to save local DB after update: {e}")
+        log_event(
+            "operation_failed",
+            "member_store",
+            level="error",
+            status="error",
+            operation="save_member_cache",
+            source="update_member_field",
+            error=e,
+        )
 
     return {"success": True, "message": "更新成功"}
 
@@ -372,19 +426,36 @@ def start_daily_sync():
                     hour=0, minute=0, second=0, microsecond=0
                 )
                 wait_seconds = (tomorrow - now).total_seconds()
-                eprint(
-                    f"[MemberDB] Next sync in {wait_seconds:.0f}s "
-                    f"(at {tomorrow.strftime('%Y-%m-%d %H:%M:%S')} UTC+8)"
+                log_event(
+                    "job_scheduled",
+                    "member_store",
+                    status="scheduled",
+                    job="member_sync",
+                    wait_seconds=wait_seconds,
+                    next_run=tomorrow.isoformat(),
                 )
                 time.sleep(wait_seconds)
                 sync_member_data()
             except Exception as e:
-                eprint(f"[MemberDB] Scheduler error: {e}")
+                log_event(
+                    "job_failed",
+                    "member_store",
+                    level="error",
+                    status="error",
+                    job="member_sync",
+                    stage="scheduler_loop",
+                    error=e,
+                )
                 time.sleep(3600)  # Retry in 1 hour on error
 
     thread = threading.Thread(target=_scheduler_loop, daemon=True)
     thread.start()
-    eprint("[MemberDB] Daily sync scheduler started")
+    log_event(
+        "service_started",
+        "member_store",
+        status="running",
+        service="member_sync_scheduler",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +465,14 @@ def init():
     """Initialize member DB: load from local file, sync from API, start scheduler."""
     loaded = load_member_db()
     if not loaded:
-        eprint("[MemberDB] Initial load failed, will retry on first lookup")
+        log_event(
+            "operation_failed",
+            "member_store",
+            level="warning",
+            status="retry_pending",
+            operation="initialize_member_store",
+            reason="initial_load_failed",
+        )
     # Always try to sync fresh data in background on startup
     threading.Thread(target=sync_member_data, daemon=True).start()
     start_daily_sync()

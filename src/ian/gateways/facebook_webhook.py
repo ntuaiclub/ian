@@ -35,7 +35,7 @@ from ian.services.member_store import (
     get_member_name as get_member_name_from_db,
     get_member_role as get_member_role_from_db,
 )
-from ian.utils.console import eprint
+from ian.utils.logging import elapsed_ms, hash_identifier, log_event
 
 MAPPING_FILE_PATH = MEMBER_MAPPING_FILE
 
@@ -68,20 +68,48 @@ def get_member_mapping(username: str, csv_path: str):
         mapping = dict(zip(df[account_col], df["角色"]))
         return mapping.get(username.strip(), "非社員（尚未加入 AI 社）")
     except Exception as e:
-        print(f"讀取檔案失敗：{e}")
+        log_event(
+            "operation_failed",
+            "facebook_webhook",
+            level="error",
+            platform="Facebook",
+            status="error",
+            operation="load_member_mapping",
+            error=e,
+        )
         return "非社員"
 
 
-async def send_typing_indicator(recipient_id, action="typing_on"):
+async def send_typing_indicator(recipient_id, action="typing_on", correlation_id=None):
     url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
     data = {"recipient": {"id": recipient_id}, "sender_action": action}
     headers = {"Content-Type": "application/json"}
     try:
         response = requests.post(url, headers=headers, json=data, timeout=3)
         if response.status_code != 200:
-            print(f"發送 FB 輸入狀態失敗: {response.text}")
+            log_event(
+                "external_send_failure",
+                "facebook_webhook",
+                level="warning",
+                platform="Facebook",
+                status="failure",
+                correlation_id=correlation_id,
+                recipient_id=recipient_id,
+                operation="typing_indicator",
+                http_status=response.status_code,
+            )
     except requests.exceptions.RequestException as e:
-        print(f"發送 FB 輸入狀態時連線失敗: {e}")
+        log_event(
+            "external_send_failure",
+            "facebook_webhook",
+            level="error",
+            platform="Facebook",
+            status="error",
+            correlation_id=correlation_id,
+            recipient_id=recipient_id,
+            operation="typing_indicator",
+            error=e,
+        )
 
 
 def get_fb_user_profile(sender_id):
@@ -94,26 +122,73 @@ def get_fb_user_profile(sender_id):
             full_name = f"{profile.get('first_name', '')} {profile.get('last_name', '')}".strip()
             return full_name
         else:
-            print(f"取得 FB 使用者資訊失敗: {response.text}")
+            log_event(
+                "external_send_failure",
+                "facebook_webhook",
+                level="warning",
+                platform="Facebook",
+                status="failure",
+                sender_id=sender_id,
+                operation="get_user_profile",
+                http_status=response.status_code,
+            )
             return None
     except requests.exceptions.RequestException as e:
-        print(f"連線 Facebook 失敗: {e}")
+        log_event(
+            "external_send_failure",
+            "facebook_webhook",
+            level="error",
+            platform="Facebook",
+            status="error",
+            sender_id=sender_id,
+            operation="get_user_profile",
+            error=e,
+        )
         return None
 
 
-def send_message(recipient_id, text):
+def send_message(recipient_id, text, correlation_id=None):
     url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
     payload = {"recipient": {"id": recipient_id}, "message": {"text": text}}
     headers = {"Content-Type": "application/json"}
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=10)
         if response.status_code != 200:
-            print(f"傳送 FB 訊息失敗: {response.text}")
+            log_event(
+                "external_send_failure",
+                "facebook_webhook",
+                level="warning",
+                platform="Facebook",
+                status="failure",
+                correlation_id=correlation_id,
+                recipient_id=recipient_id,
+                operation="send_message",
+                http_status=response.status_code,
+            )
+        else:
+            log_event(
+                "reply_sent",
+                "facebook_webhook",
+                platform="Facebook",
+                status="success",
+                correlation_id=correlation_id,
+                recipient_id=recipient_id,
+            )
     except requests.exceptions.RequestException as e:
-        print(f"發送 FB 訊息時連線失敗: {e}")
+        log_event(
+            "external_send_failure",
+            "facebook_webhook",
+            level="error",
+            platform="Facebook",
+            status="error",
+            correlation_id=correlation_id,
+            recipient_id=recipient_id,
+            operation="send_message",
+            error=e,
+        )
 
 
-def send_reaction(recipient_id, mid, emoji):
+def send_reaction(recipient_id, mid, emoji, correlation_id=None):
     """Send a reaction emoji to a specific message via FB Graph API."""
     url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
     payload = {
@@ -128,16 +203,49 @@ def send_reaction(recipient_id, mid, emoji):
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=10)
         if response.status_code != 200:
-            eprint(f"FB reaction 失敗: {response.text}")
+            log_event(
+                "external_send_failure",
+                "facebook_webhook",
+                level="warning",
+                platform="Facebook",
+                status="failure",
+                correlation_id=correlation_id,
+                recipient_id=recipient_id,
+                message_id=mid,
+                operation="send_reaction",
+                http_status=response.status_code,
+            )
         else:
-            eprint(f"FB reaction 成功: {emoji}")
+            log_event(
+                "reply_sent",
+                "facebook_webhook",
+                platform="Facebook",
+                status="success",
+                correlation_id=correlation_id,
+                recipient_id=recipient_id,
+                message_id=mid,
+                reply_type="reaction",
+            )
     except requests.exceptions.RequestException as e:
-        eprint(f"發送 FB reaction 時連線失敗: {e}")
+        log_event(
+            "external_send_failure",
+            "facebook_webhook",
+            level="error",
+            platform="Facebook",
+            status="error",
+            correlation_id=correlation_id,
+            recipient_id=recipient_id,
+            message_id=mid,
+            operation="send_reaction",
+            error=e,
+        )
 
 
 async def process_message_task(sender_id, user_message, mid=None):
+    correlation_id = hash_identifier(mid or sender_id)
+    started_at = time.monotonic()
     try:
-        await send_typing_indicator(sender_id, "typing_on")
+        await send_typing_indicator(sender_id, "typing_on", correlation_id)
         user_name = get_fb_user_profile(sender_id) or get_member_name_from_db("FB", sender_id) or "FB訪客"
         roles = get_member_role_from_db("FB", sender_id)
         account_id = sender_id
@@ -146,10 +254,16 @@ async def process_message_task(sender_id, user_message, mid=None):
             if csv_role != "非社員（尚未加入 AI 社）":
                 roles = csv_role
 
-        print(f"收到 FB [{roles}]/{user_name} ({sender_id}) 的訊息：{user_message}")
-        print(f"傳送給 agent 的身分資訊: {roles}")
-
         current_time = get_current_time()
+        log_event(
+            "agent_invoked",
+            "facebook_webhook",
+            platform="Facebook",
+            status="started",
+            correlation_id=correlation_id,
+            sender_id=sender_id,
+            message_length=len(user_message),
+        )
         agent_result = await run_agent_message_flow(
             session_id=sender_id,
             user_name=user_name,
@@ -161,21 +275,43 @@ async def process_message_task(sender_id, user_message, mid=None):
             account_id=account_id,
         )
 
-        await send_typing_indicator(sender_id, "typing_off")
+        await send_typing_indicator(sender_id, "typing_off", correlation_id)
 
         if not agent_result.should_reply:
-            eprint("FB: Agent 決定不回覆此訊息")
+            log_event(
+                "no_response",
+                "facebook_webhook",
+                platform="Facebook",
+                status="success",
+                duration_ms=elapsed_ms(started_at),
+                correlation_id=correlation_id,
+                sender_id=sender_id,
+                reason="agent_decision",
+            )
             if agent_result.reaction_emoji and mid:
-                send_reaction(sender_id, mid, agent_result.reaction_emoji)
+                send_reaction(sender_id, mid, agent_result.reaction_emoji, correlation_id)
             return
 
-        send_message(sender_id, agent_result.text)
+        send_message(sender_id, agent_result.text, correlation_id)
         save_chat_history(sender_id, user_name, user_message, agent_result.text, "FB")
-        print(f"FB 訊息處理完成並已回覆給 {user_name}")
 
     except Exception as e:
-        print(f"背景訊息處理任務發生錯誤 (FB, {sender_id}): {e}")
-        send_message(sender_id, "😰 Ian 目前有點忙碌，請稍後再試。\nIan is currently busy. Please try again later.")
+        log_event(
+            "request_failed",
+            "facebook_webhook",
+            level="error",
+            platform="Facebook",
+            status="error",
+            duration_ms=elapsed_ms(started_at),
+            correlation_id=correlation_id,
+            sender_id=sender_id,
+            error=e,
+        )
+        send_message(
+            sender_id,
+            "😰 Ian 目前有點忙碌，請稍後再試。\nIan is currently busy. Please try again later.",
+            correlation_id,
+        )
 
 
 def handle_facebook_messages(data):
@@ -192,12 +328,30 @@ def handle_facebook_messages(data):
 
                 with PROCESSED_MESSAGES_LOCK:
                     if mid in PROCESSED_MESSAGES:
-                        print(f"偵測到重複的訊息 ID (mid: {mid})，已略過。")
+                        log_event(
+                            "request_ignored",
+                            "facebook_webhook",
+                            platform="Facebook",
+                            status="duplicate",
+                            correlation_id=hash_identifier(mid),
+                            message_id=mid,
+                        )
                         continue
                     PROCESSED_MESSAGES[mid] = time.time()
 
                 sender_id = messaging_event["sender"]["id"]
                 user_message = message_obj["text"]
+
+                log_event(
+                    "request_received",
+                    "facebook_webhook",
+                    platform="Facebook",
+                    status="accepted",
+                    correlation_id=hash_identifier(mid),
+                    sender_id=sender_id,
+                    message_id=mid,
+                    message_length=len(user_message),
+                )
 
                 coro = process_message_task(sender_id, user_message, mid=mid)
                 thread = threading.Thread(target=asyncio.run, args=(coro,))

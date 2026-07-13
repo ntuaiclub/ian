@@ -25,7 +25,7 @@ from queue import Queue
 
 from ian.config import DISCORD_LOG_CHANNEL_ID_INT
 from ian.services import discord_api
-from ian.utils.console import eprint
+from ian.utils.logging import log_event
 
 LOG_CHANNEL_ID = DISCORD_LOG_CHANNEL_ID_INT
 log_queue: Queue = Queue()
@@ -40,7 +40,13 @@ def start_log_processor():
     log_processor_started = True
     thread = threading.Thread(target=_process_log_queue_sync, daemon=True)
     thread.start()
-    eprint(f"Discord log processor started, logging to channel {LOG_CHANNEL_ID}")
+    log_event(
+        "service_started",
+        "agent_logging",
+        status="running",
+        service="discord_log_processor",
+        channel_id=LOG_CHANNEL_ID,
+    )
 
 
 def send_startup_notification():
@@ -63,14 +69,36 @@ def send_startup_notification():
 
         response = discord_api.send_channel_message(LOG_CHANNEL_ID, message)
         if response.status_code != 200:
-            eprint(
-                "Failed to send startup notification: "
-                f"{response.status_code} - {response.text}"
+            log_event(
+                "external_send_failure",
+                "agent_logging",
+                level="warning",
+                platform="Discord",
+                status="failure",
+                channel_id=LOG_CHANNEL_ID,
+                operation="send_startup_notification",
+                http_status=response.status_code,
             )
         else:
-            eprint("Startup notification sent to Discord log channel")
+            log_event(
+                "reply_sent",
+                "agent_logging",
+                platform="Discord",
+                status="success",
+                channel_id=LOG_CHANNEL_ID,
+                operation="send_startup_notification",
+            )
     except Exception as e:
-        eprint(f"Failed to send startup notification: {e}")
+        log_event(
+            "external_send_failure",
+            "agent_logging",
+            level="error",
+            platform="Discord",
+            status="error",
+            channel_id=LOG_CHANNEL_ID,
+            operation="send_startup_notification",
+            error=e,
+        )
 
 
 def _process_log_queue_sync():
@@ -82,7 +110,14 @@ def _process_log_queue_sync():
                 _send_log_to_discord_sync(log_entry)
             time.sleep(0.5)
         except Exception as e:
-            eprint(f"Error processing log queue: {e}")
+            log_event(
+                "job_failed",
+                "agent_logging",
+                level="error",
+                status="error",
+                job="process_log_queue",
+                error=e,
+            )
 
 
 def _send_log_to_discord_sync(log_entry: dict):
@@ -94,9 +129,27 @@ def _send_log_to_discord_sync(log_entry: dict):
 
         response = discord_api.send_channel_message(LOG_CHANNEL_ID, message)
         if response.status_code != 200:
-            eprint(f"Failed to send log to Discord: {response.status_code} - {response.text}")
+            log_event(
+                "external_send_failure",
+                "agent_logging",
+                level="warning",
+                platform="Discord",
+                status="failure",
+                channel_id=LOG_CHANNEL_ID,
+                operation="send_agent_log",
+                http_status=response.status_code,
+            )
     except Exception as e:
-        eprint(f"Failed to send log to Discord: {e}")
+        log_event(
+            "external_send_failure",
+            "agent_logging",
+            level="error",
+            platform="Discord",
+            status="error",
+            channel_id=LOG_CHANNEL_ID,
+            operation="send_agent_log",
+            error=e,
+        )
 
 
 def format_log_message(log_entry: dict) -> str:

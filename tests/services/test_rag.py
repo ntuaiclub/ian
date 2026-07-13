@@ -19,6 +19,7 @@
 #
 
 import hashlib
+import json
 
 import pytest
 from langchain_core.documents import Document
@@ -34,8 +35,8 @@ def reset_rag_helper_state(monkeypatch):
     monkeypatch.setattr(rag, "bm25_corpus", [])
     monkeypatch.setattr(rag, "bm25_docs", [])
     yield
-    rag.load_jsonl_data.cache_clear()
-    rag.load_markdown_data.cache_clear()
+    getattr(rag.load_jsonl_data, "cache_clear", lambda: None)()
+    getattr(rag.load_markdown_data, "cache_clear", lambda: None)()
 
 
 def test_simple_bm25_scores_matching_document_higher():
@@ -246,3 +247,74 @@ def test_compute_source_hash_uses_existing_files_only(
 
     expected_content = (jsonl_content or b"") + (markdown_content or b"")
     assert result == hashlib.md5(expected_content).hexdigest()
+
+
+def _stub_rag_initialization(monkeypatch):
+    monkeypatch.setattr(rag.jieba, "initialize", lambda: None)
+    monkeypatch.setattr(rag, "HuggingFaceEmbeddings", lambda **_kwargs: object())
+    monkeypatch.setattr(rag, "_compute_source_hash", lambda *_args: "source-hash")
+    monkeypatch.setattr(rag, "_get_saved_hash", lambda: "source-hash")
+    monkeypatch.setattr(rag.os.path, "exists", lambda _path: True)
+    monkeypatch.setattr(rag, "load_jsonl_data", lambda _path: [])
+    monkeypatch.setattr(rag, "load_markdown_data", lambda _path: "")
+    monkeypatch.setattr(
+        rag,
+        "create_enhanced_documents",
+        lambda *_args: [_document("cached", "cached document")],
+    )
+    monkeypatch.setattr(rag, "build_bm25_index", lambda: None)
+    monkeypatch.setattr(rag, "_try_move_faiss_to_gpu", lambda: False)
+
+
+def test_initialize_rag_system_logs_cache_success(monkeypatch, capsys):
+    _stub_rag_initialization(monkeypatch)
+    monkeypatch.setattr(rag, "_try_load_faiss_index", lambda: True)
+
+    assert rag.initialize_rag_system() is True
+
+    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert [entry["event"] for entry in entries] == ["job_started", "job_completed"]
+    assert entries[-1]["source"] == "cache"
+    assert entries[-1]["document_count"] == 1
+
+
+def test_initialize_rag_system_logs_embedding_failure_without_error_message(
+    monkeypatch, capsys
+):
+    monkeypatch.setattr(rag.jieba, "initialize", lambda: None)
+    monkeypatch.setattr(
+        rag,
+        "HuggingFaceEmbeddings",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("private model detail")),
+    )
+
+    assert rag.initialize_rag_system() is False
+
+    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert entries[-1]["event"] == "job_failed"
+    assert entries[-1]["stage"] == "embedding_model"
+    assert entries[-1]["error_type"] == "RuntimeError"
+    assert "private model detail" not in json.dumps(entries)
+
+
+def test_initialize_rag_system_logs_tokenizer_failure(monkeypatch, capsys):
+    monkeypatch.setattr(
+        rag.jieba,
+        "initialize",
+        lambda: (_ for _ in ()).throw(RuntimeError("private tokenizer detail")),
+    )
+    monkeypatch.setattr(
+        rag,
+        "HuggingFaceEmbeddings",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("embedding should not be initialized")
+        ),
+    )
+
+    assert rag.initialize_rag_system() is False
+
+    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert entries[-1]["event"] == "job_failed"
+    assert entries[-1]["stage"] == "tokenizer"
+    assert entries[-1]["error_type"] == "RuntimeError"
+    assert "private tokenizer detail" not in json.dumps(entries)

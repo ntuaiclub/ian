@@ -28,8 +28,10 @@ from ian.config import TZ_TPE
 from ian.utils.logging import (
     REDACTED,
     StructuredLogger,
+    elapsed_ms,
     hash_account_id,
     hash_email,
+    hash_identifier,
     log_event,
     redact_token,
     redact_user_content,
@@ -137,6 +139,16 @@ def test_email_hashing_is_case_insensitive():
 def test_account_id_hashing_accepts_numeric_and_missing_identifiers():
     assert hash_account_id(12345).startswith("sha256:")
     assert hash_account_id(None) == ""
+
+
+def test_generic_identifier_hash_matches_account_hashing_policy():
+    assert hash_identifier("identifier-1") == hash_account_id("identifier-1")
+
+
+def test_elapsed_ms_uses_monotonic_clock(monkeypatch):
+    monkeypatch.setattr("ian.utils.logging.time.monotonic", lambda: 12.345)
+
+    assert elapsed_ms(10.0) == pytest.approx(2345.0)
 
 
 @pytest.mark.parametrize(

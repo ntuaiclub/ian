@@ -19,6 +19,8 @@
 #
 
 import asyncio
+import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -87,7 +89,9 @@ def test_handle_facebook_messages_skips_nonprocessable_messages(
     assert facebook_webhook.PROCESSED_MESSAGES == expected_processed_messages
 
 
-def test_handle_facebook_messages_routes_new_message_to_background_task(monkeypatch):
+def test_handle_facebook_messages_routes_new_message_to_background_task(
+    monkeypatch, capsys
+):
     processed = []
 
     async def fake_process(sender_id, text, mid):
@@ -124,6 +128,12 @@ def test_handle_facebook_messages_routes_new_message_to_background_task(monkeypa
 
     assert facebook_webhook.PROCESSED_MESSAGES == {"mid-1": 123.0}
     assert processed == [("sender-1", "hello", "mid-1")]
+    entry = json.loads(capsys.readouterr().err)
+    assert entry["event"] == "request_received"
+    assert entry["correlation_id"].startswith("sha256:")
+    assert "sender-1" not in json.dumps(entry)
+    assert "mid-1" not in json.dumps(entry)
+    assert "hello" not in json.dumps(entry)
 
 
 @pytest.mark.parametrize(
@@ -163,12 +173,12 @@ def test_get_member_mapping_handles_csv_sources(
     ],
 )
 def test_process_message_task_handles_no_response_reactions(
-    monkeypatch, mid, reaction_emoji, expected_reactions
+    monkeypatch, capsys, mid, reaction_emoji, expected_reactions
 ):
     typing_calls = []
     reactions = []
 
-    async def fake_typing(recipient_id, action):
+    async def fake_typing(recipient_id, action, _correlation_id=None):
         typing_calls.append((recipient_id, action))
 
     async def fake_agent(**_kwargs):
@@ -187,7 +197,7 @@ def test_process_message_task_handles_no_response_reactions(
     monkeypatch.setattr(
         facebook_webhook,
         "send_reaction",
-        lambda sender_id, message_id, emoji: reactions.append(
+        lambda sender_id, message_id, emoji, _correlation_id=None: reactions.append(
             (sender_id, message_id, emoji)
         ),
     )
@@ -213,3 +223,39 @@ def test_process_message_task_handles_no_response_reactions(
         ("sender-1", "typing_off"),
     ]
     assert reactions == expected_reactions
+    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert [entry["event"] for entry in entries] == ["agent_invoked", "no_response"]
+    assert "sender-1" not in json.dumps(entries)
+    assert "hello" not in json.dumps(entries)
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected_event", "expected_status"),
+    [
+        pytest.param(200, "reply_sent", "success", id="success"),
+        pytest.param(500, "external_send_failure", "failure", id="http-failure"),
+    ],
+)
+def test_send_message_emits_correlated_redacted_result(
+    monkeypatch, capsys, status_code, expected_event, expected_status
+):
+    monkeypatch.setattr(
+        facebook_webhook.requests,
+        "post",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            status_code=status_code,
+            text="private response body",
+        ),
+    )
+
+    facebook_webhook.send_message(
+        "sender-1", "private reply", correlation_id="sha256:correlation"
+    )
+
+    entry = json.loads(capsys.readouterr().err)
+    assert entry["event"] == expected_event
+    assert entry["status"] == expected_status
+    assert entry["correlation_id"] == "sha256:correlation"
+    assert "sender-1" not in json.dumps(entry)
+    assert "private reply" not in json.dumps(entry)
+    assert "private response body" not in json.dumps(entry)
