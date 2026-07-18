@@ -20,9 +20,17 @@
 
 import time
 
-from ian.config import DISCORD_BOT_TOKEN, DISCORD_LOG_CHANNEL_ID
-from ian.domain.reminders import get_valid_bound_members
+import requests
+
+from ian.config import (
+    DISCORD_BOT_TOKEN,
+    DISCORD_LOG_CHANNEL_ID,
+    LINE_CHANNEL_ACCESS_TOKEN,
+    PAGE_ACCESS_TOKEN,
+)
+from ian.domain.members import Platform
 from ian.services import discord_api
+from ian.services.member_service import ReminderRecipient
 from ian.utils.logging import log_event
 
 
@@ -159,20 +167,108 @@ def format_staff_notification(event: dict, note: str = "") -> str:
     return "\n".join(lines)
 
 
-def send_notification_to_members(message: str, members: list[dict]) -> dict:
-    bound = get_valid_bound_members(members)
+def send_facebook_message(account_id: str, text: str) -> bool:
+    if not PAGE_ACCESS_TOKEN:
+        return False
+    try:
+        response = requests.post(
+            "https://graph.facebook.com/v18.0/me/messages",
+            params={"access_token": PAGE_ACCESS_TOKEN},
+            json={"recipient": {"id": account_id}, "message": {"text": text}},
+            timeout=10,
+        )
+        success = response.status_code in (200, 201)
+    except requests.RequestException as error:
+        log_event(
+            "facebook_message_delivery",
+            "notifications",
+            level="error",
+            platform="Facebook",
+            status="error",
+            account_id=account_id,
+            error=error,
+        )
+        return False
 
-    discord_ok, discord_fail = 0, 0
-    for member in bound:
-        if member["discord_id"]:
-            if send_discord_dm(member["discord_id"], message):
-                discord_ok += 1
-            else:
-                discord_fail += 1
-            time.sleep(0.5)
+    log_event(
+        "facebook_message_delivery",
+        "notifications",
+        level="info" if success else "warning",
+        platform="Facebook",
+        status="success" if success else "failure",
+        account_id=account_id,
+        http_status=response.status_code,
+    )
+    return success
 
-    return {
-        "total_members": len(bound),
-        "discord_ok": discord_ok,
-        "discord_fail": discord_fail,
+
+def send_line_message(account_id: str, text: str) -> bool:
+    if not LINE_CHANNEL_ACCESS_TOKEN:
+        return False
+    try:
+        response = requests.post(
+            "https://api.line.me/v2/bot/message/push",
+            headers={
+                "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+                "Content-Type": "application/json",
+            },
+            json={"to": account_id, "messages": [{"type": "text", "text": text}]},
+            timeout=10,
+        )
+        success = response.status_code in (200, 201)
+    except requests.RequestException as error:
+        log_event(
+            "line_message_delivery",
+            "notifications",
+            level="error",
+            platform="LINE",
+            status="error",
+            account_id=account_id,
+            error=error,
+        )
+        return False
+
+    log_event(
+        "line_message_delivery",
+        "notifications",
+        level="info" if success else "warning",
+        platform="LINE",
+        status="success" if success else "failure",
+        account_id=account_id,
+        http_status=response.status_code,
+    )
+    return success
+
+
+def send_notification(recipient: ReminderRecipient, message: str) -> bool:
+    senders = {
+        Platform.DISCORD: send_discord_dm,
+        Platform.FB: send_facebook_message,
+        Platform.LINE: send_line_message,
     }
+    return senders[recipient.platform](recipient.account_id, message)
+
+
+def empty_delivery_result(recipients: list[ReminderRecipient]) -> dict[str, int]:
+    return {
+        "total_members": len({recipient.user_id for recipient in recipients}),
+        "total_recipients": len(recipients),
+        "discord_ok": 0,
+        "discord_fail": 0,
+        "fb_ok": 0,
+        "fb_fail": 0,
+        "line_ok": 0,
+        "line_fail": 0,
+    }
+
+
+def send_notification_to_members(
+    message: str,
+    recipients: list[ReminderRecipient],
+) -> dict[str, int]:
+    result = empty_delivery_result(recipients)
+    for recipient in recipients:
+        success = send_notification(recipient, message)
+        result[f"{recipient.platform.value}_{'ok' if success else 'fail'}"] += 1
+        time.sleep(0.5)
+    return result

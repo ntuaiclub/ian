@@ -24,7 +24,6 @@ from linebot.exceptions import InvalidSignatureError
 from ian.config import FB_VERIFY_TOKEN
 from ian.gateways import facebook_webhook, line_webhook
 from ian.gateways.messaging_common import get_current_time
-from ian.services.member_store import init as init_member_db
 from ian.utils.logging import log_event
 
 app = Flask(__name__)
@@ -47,44 +46,31 @@ def configure_platforms(platform: str = "all") -> set[str]:
     ENABLED_WEBHOOK_PLATFORMS = selected.copy()
     return ENABLED_WEBHOOK_PLATFORMS
 
+
 def initialize_dependencies() -> None:
-    """Initialize external member data when the webhook server starts."""
-    try:
-        init_member_db()
-        log_event(
-            "operation_completed",
-            "webhook_server",
-            status="success",
-            operation="initialize_member_store",
-        )
-    except Exception as e:
-        log_event(
-            "operation_failed",
-            "webhook_server",
-            level="error",
-            status="error",
-            operation="initialize_member_store",
-            error=e,
-        )
+    """Webhook dependencies are initialized lazily by their SDK clients."""
 
 
-@app.route('/', methods=['GET'])
+@app.route("/", methods=["GET"])
 async def verify():
     if "Facebook" not in ENABLED_WEBHOOK_PLATFORMS:
         abort(404)
-    if request.args.get("hub.mode") == "subscribe" and request.args.get("hub.challenge"):
+    if request.args.get("hub.mode") == "subscribe" and request.args.get(
+        "hub.challenge"
+    ):
         if request.args.get("hub.verify_token") == VERIFY_TOKEN:
             return request.args["hub.challenge"], 200
         return "驗證失敗", 403
     return "Hello World", 200
 
-@app.route('/', methods=['POST'])
+
+@app.route("/", methods=["POST"])
 async def webhook():
     if "Facebook" not in ENABLED_WEBHOOK_PLATFORMS:
         abort(404)
     data = request.get_json()
     try:
-        if data.get('object') == 'page':
+        if data.get("object") == "page":
             facebook_webhook.handle_facebook_messages(data)
     except Exception as e:
         log_event(
@@ -99,7 +85,7 @@ async def webhook():
     return "ok", 200
 
 
-@app.route('/line/callback', methods=['POST'])
+@app.route("/line/callback", methods=["POST"])
 def line_callback():
     """LINE webhook 接收端點。"""
     if "LINE" not in ENABLED_WEBHOOK_PLATFORMS:
@@ -134,13 +120,14 @@ def line_callback():
     return "OK", 200
 
 
-@app.route('/status', methods=['GET'])
+@app.route("/status", methods=["GET"])
 def status():
     return {
         "status": "running",
         "timestamp": get_current_time()["nowdatetime"],
-        "platforms": sorted(ENABLED_WEBHOOK_PLATFORMS)
+        "platforms": sorted(ENABLED_WEBHOOK_PLATFORMS),
     }, 200
+
 
 def entrypoint(platform: str = "all"):
     initialize_dependencies()
@@ -154,4 +141,4 @@ def entrypoint(platform: str = "all"):
         port=5190,
         enabled_platforms=sorted(enabled),
     )
-    app.run(host='0.0.0.0', port=5190, debug=False)
+    app.run(host="0.0.0.0", port=5190, debug=False)

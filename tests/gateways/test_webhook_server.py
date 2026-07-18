@@ -24,7 +24,6 @@ import warnings
 import pytest
 from linebot.exceptions import InvalidSignatureError
 
-from ian.config import MEMBER_MAPPING_FILE
 from ian.gateways import facebook_webhook, line_webhook, webhook_server
 
 
@@ -40,7 +39,9 @@ def test_webhook_post_delegates_facebook_messages(monkeypatch):
     def fake_handle_facebook_messages(data):
         calls.append(data)
 
-    monkeypatch.setattr(facebook_webhook, "handle_facebook_messages", fake_handle_facebook_messages)
+    monkeypatch.setattr(
+        facebook_webhook, "handle_facebook_messages", fake_handle_facebook_messages
+    )
 
     client = webhook_server.app.test_client()
     response = client.post("/", json={"object": "page", "entry": []})
@@ -56,7 +57,9 @@ def test_facebook_webhook_route_can_be_disabled(monkeypatch):
     def fake_handle_facebook_messages(data):
         calls.append(data)
 
-    monkeypatch.setattr(facebook_webhook, "handle_facebook_messages", fake_handle_facebook_messages)
+    monkeypatch.setattr(
+        facebook_webhook, "handle_facebook_messages", fake_handle_facebook_messages
+    )
     webhook_server.configure_platforms("line")
 
     try:
@@ -125,12 +128,6 @@ def test_entrypoint_initializes_dependencies_before_starting_server(monkeypatch)
         ("run", {"host": "0.0.0.0", "port": 5190, "debug": False}),
     ]
     webhook_server.configure_platforms("all")
-
-
-def test_facebook_member_mapping_path_comes_from_config():
-    assert facebook_webhook.MAPPING_FILE_PATH == MEMBER_MAPPING_FILE
-    assert MEMBER_MAPPING_FILE.name == "member_mapping.csv"
-    assert MEMBER_MAPPING_FILE.parent.name == "data"
 
 
 @pytest.mark.parametrize(

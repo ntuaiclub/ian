@@ -26,17 +26,18 @@ import requests
 from linebot import LineBotApi, WebhookHandler
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
-from ian.config import LINE_ALLOWED_GROUPS, LINE_CHANNEL_ACCESS_TOKEN, LINE_CHANNEL_SECRET
+from ian.config import (
+    LINE_ALLOWED_GROUPS,
+    LINE_CHANNEL_ACCESS_TOKEN,
+    LINE_CHANNEL_SECRET,
+)
 from ian.domain.messages import split_message_chunks
 from ian.gateways.agent_bridge import run_agent_message_flow
 from ian.gateways.messaging_common import (
     get_current_time,
     save_chat_history,
 )
-from ian.services.member_store import (
-    get_member_name as get_member_name_from_db,
-    get_member_role as get_member_role_from_db,
-)
+from ian.services.member_service import member_service
 from ian.utils.logging import elapsed_ms, hash_identifier, log_event
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
@@ -59,7 +60,7 @@ def get_line_user_profile(user_id):
             operation="get_user_profile",
             error=e,
         )
-        return get_member_name_from_db("LINE", user_id) or f"LINE_{user_id[:8]}"
+        return None
 
 
 @line_handler.add(MessageEvent, message=TextMessage)
@@ -94,7 +95,9 @@ def handle_line_message(event):
     actual_question = user_text.strip()
 
     if not actual_question:
-        line_bot_api.reply_message(event.reply_token, TextSendMessage(text="請輸入您的問題！"))
+        line_bot_api.reply_message(
+            event.reply_token, TextSendMessage(text="請輸入您的問題！")
+        )
         return
 
     log_event(
@@ -133,21 +136,27 @@ def handle_line_message(event):
             error=e,
         )
 
-    coro = process_line_message_task(event.reply_token, user_id, actual_question, chat_id, source_type)
+    coro = process_line_message_task(
+        event.reply_token, user_id, actual_question, chat_id, source_type
+    )
     thread = threading.Thread(target=asyncio.run, args=(coro,))
     thread.start()
 
 
-async def process_line_message_task(reply_token, user_id, user_message, chat_id, source_type="group"):
+async def process_line_message_task(
+    reply_token, user_id, user_message, chat_id, source_type="group"
+):
     """LINE 訊息背景處理任務。"""
     correlation_id = hash_identifier(reply_token)
     started_at = time.monotonic()
     try:
-        user_name = get_line_user_profile(user_id)
-        if source_type == "1on1":
-            roles = get_member_role_from_db("LINE", user_id)
-        else:
-            roles = "社員"
+        member = await member_service.find_user_by_platform("LINE", user_id)
+        user_name = (
+            get_line_user_profile(user_id)
+            or (member.name if member else None)
+            or f"LINE_{user_id[:8]}"
+        )
+        roles = member.member_role() if member else "非社員"
 
         current_time = get_current_time()
         log_event(
@@ -169,6 +178,7 @@ async def process_line_message_task(reply_token, user_id, user_message, chat_id,
             channel_id=str(chat_id),
             platform="LINE",
             account_id=user_id,
+            member=member,
         )
 
         if not agent_result.should_reply:

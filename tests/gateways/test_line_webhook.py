@@ -99,9 +99,12 @@ def _stub_line_task(monkeypatch, agent_result):
     async def fake_agent(**_kwargs):
         return agent_result
 
+    async def find_member(*_args):
+        return None
+
     monkeypatch.setattr(line_webhook, "get_line_user_profile", lambda _id: "Alice")
     monkeypatch.setattr(
-        line_webhook, "get_member_role_from_db", lambda *_args: "社員"
+        line_webhook.member_service, "find_user_by_platform", find_member
     )
     monkeypatch.setattr(line_webhook, "run_agent_message_flow", fake_agent)
     monkeypatch.setattr(

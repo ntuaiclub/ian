@@ -37,14 +37,7 @@ from ian.config import (
 from ian.services import course_catalog
 from ian.services import notifications
 from ian.services import rag
-from ian.services.member_store import (
-    bind_email as _bind_email_to_platform,
-    get_member_role,
-    init as init_member_db,
-    lookup_member_by_platform,
-    update_personal_prompt as _update_personal_prompt,
-    update_subscribe as _update_subscribe,
-)
+from ian.services.member_service import member_service
 from ian.utils.logging import log_event
 
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
@@ -61,7 +54,7 @@ mcp = FastMCP(host=MCP_HOST, port=MCP_PORT, stateless_http=True)
 NON_MEMBER_PREFIX = "非社員"
 
 
-def check_user_permission(
+async def check_user_permission(
     platform: Optional[str] = None,
     account_id: Optional[str] = None,
     channel_id: Optional[str] = None,
@@ -77,13 +70,14 @@ def check_user_permission(
     """
     role = "非社員"
     if platform and account_id:
-        role = get_member_role(platform, str(account_id).strip())
+        role = await member_service.get_member_role(platform, str(account_id).strip())
 
     if channel_id and channel_id in ALLOWED_CHANNELS:
         return True, role
     if role and not role.startswith(NON_MEMBER_PREFIX):
         return True, role
     return False, role
+
 
 def initialize_dependencies() -> None:
     """Initialize external data sources when the MCP server starts."""
@@ -97,24 +91,6 @@ def initialize_dependencies() -> None:
             level="error",
             status="error",
             operation="initialize_data_sources",
-            error=e,
-        )
-
-    try:
-        init_member_db()
-        log_event(
-            "operation_completed",
-            "mcp_server",
-            status="success",
-            operation="initialize_member_store",
-        )
-    except Exception as e:
-        log_event(
-            "operation_failed",
-            "mcp_server",
-            level="error",
-            status="error",
-            operation="initialize_member_store",
             error=e,
         )
 
@@ -141,6 +117,7 @@ def _log_mcp_tool_failure(
 # ---------------------------------------------------------------------------
 # MCP Tools
 # ---------------------------------------------------------------------------
+
 
 @mcp.tool(name="course_retreviler")
 async def search_course_chunks_by_semantics(
@@ -173,8 +150,8 @@ async def search_course_chunks_by_semantics(
         )
 
         # 權限檢查 — 角色一律從綁定 DB 查，不採信 LLM 傳進來的字串
-        has_permission, _ = await asyncio.to_thread(
-            check_user_permission, platform, account_id, channel_id
+        has_permission, _ = await check_user_permission(
+            platform, account_id, channel_id
         )
         log_event(
             "tool_invoked",
@@ -203,15 +180,27 @@ async def search_course_chunks_by_semantics(
                 # 找不到匹配結果，優先回傳近期課程而非全部
                 if result.startswith("搜尋課程資料時發生錯誤"):
                     return result
-                upcoming = await asyncio.to_thread(course_catalog.get_upcoming_courses, has_permission, 2)
+                upcoming = await asyncio.to_thread(
+                    course_catalog.get_upcoming_courses, has_permission, 2
+                )
                 if upcoming:
-                    return f"未找到匹配 '{query}' 的課程資料，以下是近期課程：\n\n{upcoming}" + course_catalog.get_permission_notice(has_permission)
+                    return (
+                        f"未找到匹配 '{query}' 的課程資料，以下是近期課程：\n\n{upcoming}"
+                        + course_catalog.get_permission_notice(has_permission)
+                    )
                 else:
-                    all_data = await asyncio.to_thread(course_catalog.get_all_course_data, has_permission)
-                    return f"未找到匹配 '{query}' 的課程資料，以下是所有可用的課程資料：\n\n{all_data}" + course_catalog.get_permission_notice(has_permission)
+                    all_data = await asyncio.to_thread(
+                        course_catalog.get_all_course_data, has_permission
+                    )
+                    return (
+                        f"未找到匹配 '{query}' 的課程資料，以下是所有可用的課程資料：\n\n{all_data}"
+                        + course_catalog.get_permission_notice(has_permission)
+                    )
         else:
             # 沒有查詢條件，返回所有課程資料 + 權限提示
-            all_data = await asyncio.to_thread(course_catalog.get_all_course_data, has_permission)
+            all_data = await asyncio.to_thread(
+                course_catalog.get_all_course_data, has_permission
+            )
             return all_data + course_catalog.get_permission_notice(has_permission)
 
     except Exception as e:
@@ -268,7 +257,9 @@ async def search_qa_chunks_by_semantics(query: str, top_k: int = 5) -> str:
 
 
 @mcp.tool(name="notify_staff")
-async def notify_staff(message: str, user_name: str = "", platform: Optional[str] = "", context: str = "") -> str:
+async def notify_staff(
+    message: str, user_name: str = "", platform: Optional[str] = "", context: str = ""
+) -> str:
     """
     當 agent 認為需要通知幹部時，使用此工具發送通知訊息到幹部 Discord 頻道。
 
@@ -287,6 +278,7 @@ async def notify_staff(message: str, user_name: str = "", platform: Optional[str
     try:
         # 格式化通知訊息
         from datetime import datetime, timezone, timedelta
+
         tz_taipei = timezone(timedelta(hours=8))
         timestamp = datetime.now(tz_taipei).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -322,7 +314,9 @@ async def notify_staff(message: str, user_name: str = "", platform: Optional[str
 
 
 @mcp.tool(name="generate_checkin_code")
-async def generate_checkin_code(platform: str, account_id: str, name: str = "", email: str = "") -> str:
+async def generate_checkin_code(
+    platform: str, account_id: str, name: str = "", email: str = ""
+) -> str:
     """
     產生使用者專屬的活動簽到碼連結。
 
@@ -340,20 +334,18 @@ async def generate_checkin_code(platform: str, account_id: str, name: str = "", 
         from urllib.parse import quote
 
         # 嘗試從資料庫查詢社員資料
-        member = lookup_member_by_platform(platform, account_id)
+        member = await member_service.find_user_by_platform(platform, account_id)
 
         if member:
-            member_name = member.get("name", "")
-            member_email = member.get("email", "")
+            member_name = member.name
+            member_email = member.email
             if member_name and member_email:
                 url = f"https://watsonshih.github.io/QuickRecord/user.html?name={quote(member_name)}&id={quote(member_email)}"
                 return f"已為社員「{member_name}」產生專屬簽到碼連結：\n{url}"
 
         # 非社員或資料庫查無資料：需要使用者提供 name 和 email
         if not name or not email:
-            return (
-                "在資料庫中查無您的社員資料，請提供您的「姓名」和「Email」以產生簽到碼。"
-            )
+            return "在資料庫中查無您的社員資料，請提供您的「姓名」和「Email」以產生簽到碼。"
 
         if "@" not in email:
             return "請提供有效的 Email 地址（例如：yourname@gmail.com）"
@@ -395,8 +387,8 @@ async def bind_email(email: str, platform: str, account_id: str) -> str:
         if not email or "@" not in email:
             return "請提供有效的 Email 地址（例如：yourname@gmail.com）"
 
-        result = _bind_email_to_platform(email, platform, account_id)
-        return result["message"]
+        result = await member_service.bind_user_platform(email, platform, account_id)
+        return result.message
     except Exception as e:
         _log_mcp_tool_failure(
             "bind_email",
@@ -408,24 +400,30 @@ async def bind_email(email: str, platform: str, account_id: str) -> str:
 
 
 @mcp.tool(name="update_subscribe")
-async def update_subscribe(platform: str, account_id: str, subscribe: str) -> str:
+async def update_subscribe(
+    platform: str,
+    account_id: str,
+    subscribe: str | None = None,
+) -> str:
     """
     更新社員的課程通知訂閱設定。社員可以選擇在哪些平台接收每日課程提醒通知。
     系統每天 19:00 會自動通知隔日課程給訂閱者。
 
     注意：
-    - 目前僅支援 discord 平台
+    - 支援 discord、fb、line，可用逗號分隔多選
     - 使用者必須已綁定該平台帳號才能訂閱該平台的通知
-    - 傳入空字串表示取消所有訂閱
+    - 傳入 null 表示取消所有訂閱
 
     Args:
         platform: 使用者所在的平台（Discord、FB、LINE），從系統訊息中取得 Platform
         account_id: 使用者在該平台上的唯一帳號 ID，從系統訊息中取得 Account ID
-        subscribe: 訂閱的平台，目前僅接受 "discord" 或空字串（空字串表示取消所有訂閱）
+        subscribe: 逗號分隔的平台集合（discord、fb、line），null 表示取消所有訂閱
     """
     try:
-        result = _update_subscribe(platform, account_id, subscribe)
-        return result["message"]
+        result = await member_service.update_user_subscription(
+            platform, account_id, subscribe
+        )
+        return result.message
     except Exception as e:
         _log_mcp_tool_failure(
             "update_subscribe",
@@ -437,7 +435,9 @@ async def update_subscribe(platform: str, account_id: str, subscribe: str) -> st
 
 
 @mcp.tool(name="update_personal_prompt")
-async def update_personal_prompt(platform: str, account_id: str, personal_prompt: str) -> str:
+async def update_personal_prompt(
+    platform: str, account_id: str, personal_prompt: str
+) -> str:
     """
     記錄使用者的溝通風格、興趣領域或互動偏好。這些資訊會在未來的對話中幫助 Agent 調整回應方式。
 
@@ -453,8 +453,10 @@ async def update_personal_prompt(platform: str, account_id: str, personal_prompt
         personal_prompt: 使用者溝通風格、興趣與偏好的簡短描述（最多 100 字）
     """
     try:
-        result = _update_personal_prompt(platform, account_id, personal_prompt)
-        return result["message"]
+        result = await member_service.update_personal_prompt(
+            platform, account_id, personal_prompt
+        )
+        return result.message
     except Exception as e:
         _log_mcp_tool_failure(
             "update_personal_prompt",
@@ -468,6 +470,7 @@ async def update_personal_prompt(platform: str, account_id: str, personal_prompt
 def _get_upcoming_events(limit: int = 3) -> list[dict]:
     """Return the next N upcoming events from course data."""
     from datetime import datetime, timezone, timedelta
+
     tz_tpe = timezone(timedelta(hours=8))
     today = datetime.now(tz_tpe).strftime("%Y/%m/%d")
 
@@ -485,15 +488,21 @@ def _get_upcoming_events(limit: int = 3) -> list[dict]:
         if not title or title.lower() == "nan":
             continue
         weekday = str(row.get("星期", "")).strip() if pd.notna(row.get("星期")) else ""
-        event_time = str(row.get("活動時間", "")).strip() if pd.notna(row.get("活動時間")) else ""
+        event_time = (
+            str(row.get("活動時間", "")).strip()
+            if pd.notna(row.get("活動時間"))
+            else ""
+        )
         venue = str(row.get("場地", "")).strip() if pd.notna(row.get("場地")) else ""
-        upcoming.append({
-            "date": event_date,
-            "weekday": weekday,
-            "time": event_time,
-            "venue": venue,
-            "title": title,
-        })
+        upcoming.append(
+            {
+                "date": event_date,
+                "weekday": weekday,
+                "time": event_time,
+                "venue": venue,
+                "title": title,
+            }
+        )
 
     upcoming.sort(key=lambda e: e["date"])
     return upcoming[:limit]
@@ -509,9 +518,11 @@ def _find_event_by_date(target_date: str) -> dict | None:
     for _, row in df.iterrows():
         event_date = str(row.get("時間", "")).strip()
         if event_date == target_date:
+
             def _c(val):
                 s = str(val).strip() if pd.notna(val) else ""
                 return "" if s.lower() in ("nan", "-", "無") else s
+
             return {
                 "date": event_date,
                 "weekday": _c(row.get("星期")),
@@ -530,7 +541,9 @@ def _find_event_by_date(target_date: str) -> dict | None:
 
 
 @mcp.tool(name="notify_members")
-async def notify_members(role: str, event_date: str = "", note: str = "", custom_message: str = "") -> str:
+async def notify_members(
+    role: str, event_date: str = "", note: str = "", custom_message: str = ""
+) -> str:
     """
     幹部專用工具：發送通知給所有已綁定帳號的有效社員（透過 Discord DM）。
 
@@ -556,8 +569,6 @@ async def notify_members(role: str, event_date: str = "", note: str = "", custom
     if not notifications.is_staff_role(role):
         return "此功能僅限幹部使用（角色需包含社長、部長或部員）。如果您是幹部但尚未綁定帳號，請先透過 Email 綁定身分。"
 
-    from ian.services.reminder_runner import load_members
-
     # Mode A: custom message (no event needed)
     if custom_message and custom_message.strip():
         message = f"NTUAI 通知\n\n{custom_message.strip()}"
@@ -569,30 +580,38 @@ async def notify_members(role: str, event_date: str = "", note: str = "", custom
             notification_type="custom",
         )
 
-        members = await asyncio.to_thread(load_members)
-        result = await asyncio.to_thread(notifications.send_notification_to_members, message, members)
+        recipients = await member_service.list_reminder_recipients()
+        result = await asyncio.to_thread(
+            notifications.send_notification_to_members, message, recipients
+        )
 
         summary = (
             f"自訂通知已發送完成！\n\n"
             f"通知對象: {result['total_members']} 位已綁定帳號的有效社員\n"
-            f"Discord: {result['discord_ok']} 成功, {result['discord_fail']} 失敗"
+            f"Discord: {result['discord_ok']} 成功, {result['discord_fail']} 失敗\n"
+            f"Facebook: {result['fb_ok']} 成功, {result['fb_fail']} 失敗\n"
+            f"LINE: {result['line_ok']} 成功, {result['line_fail']} 失敗"
         )
 
         await asyncio.to_thread(
             notifications.send_discord_channel_message,
             DISCORD_LOG_CHANNEL_ID,
             f"```\n[STAFF NOTIFY] Custom message\n"
-            f"Discord: {result['discord_ok']}/{result['discord_ok']+result['discord_fail']}\n```"
+            f"Discord: {result['discord_ok']}/{result['discord_ok'] + result['discord_fail']}\n"
+            f"Facebook: {result['fb_ok']}/{result['fb_ok'] + result['fb_fail']}\n"
+            f"LINE: {result['line_ok']}/{result['line_ok'] + result['line_fail']}\n```",
         )
+        failure_count = result["discord_fail"] + result["fb_fail"] + result["line_fail"]
+        sent_count = result["discord_ok"] + result["fb_ok"] + result["line_ok"]
         log_event(
             "job_completed",
             "mcp_server",
-            status="success" if result["discord_fail"] == 0 else "partial_failure",
+            status="success" if failure_count == 0 else "partial_failure",
             job="notify_members",
             notification_type="custom",
             recipient_count=result["total_members"],
-            sent_count=result["discord_ok"],
-            failed_count=result["discord_fail"],
+            sent_count=sent_count,
+            failed_count=failure_count,
         )
         return summary
 
@@ -603,7 +622,9 @@ async def notify_members(role: str, event_date: str = "", note: str = "", custom
         if not event:
             return f"找不到日期為 {event_date} 的活動，請確認日期格式為 YYYY/MM/DD。"
 
-        message = notifications.format_staff_notification(event, note=note.strip() if note else "")
+        message = notifications.format_staff_notification(
+            event, note=note.strip() if note else ""
+        )
         log_event(
             "job_started",
             "mcp_server",
@@ -613,32 +634,40 @@ async def notify_members(role: str, event_date: str = "", note: str = "", custom
             event_date=event_date,
         )
 
-        members = await asyncio.to_thread(load_members)
-        result = await asyncio.to_thread(notifications.send_notification_to_members, message, members)
+        recipients = await member_service.list_reminder_recipients()
+        result = await asyncio.to_thread(
+            notifications.send_notification_to_members, message, recipients
+        )
 
         summary = (
             f"通知已發送完成！\n\n"
             f"活動: {event['title']} ({event_date})\n"
             f"通知對象: {result['total_members']} 位已綁定帳號的有效社員\n"
-            f"Discord: {result['discord_ok']} 成功, {result['discord_fail']} 失敗"
+            f"Discord: {result['discord_ok']} 成功, {result['discord_fail']} 失敗\n"
+            f"Facebook: {result['fb_ok']} 成功, {result['fb_fail']} 失敗\n"
+            f"LINE: {result['line_ok']} 成功, {result['line_fail']} 失敗"
         )
 
         await asyncio.to_thread(
             notifications.send_discord_channel_message,
             DISCORD_LOG_CHANNEL_ID,
             f"```\n[STAFF NOTIFY] {event['title']} ({event_date})\n"
-            f"Discord: {result['discord_ok']}/{result['discord_ok']+result['discord_fail']}\n```"
+            f"Discord: {result['discord_ok']}/{result['discord_ok'] + result['discord_fail']}\n"
+            f"Facebook: {result['fb_ok']}/{result['fb_ok'] + result['fb_fail']}\n"
+            f"LINE: {result['line_ok']}/{result['line_ok'] + result['line_fail']}\n```",
         )
+        failure_count = result["discord_fail"] + result["fb_fail"] + result["line_fail"]
+        sent_count = result["discord_ok"] + result["fb_ok"] + result["line_ok"]
         log_event(
             "job_completed",
             "mcp_server",
-            status="success" if result["discord_fail"] == 0 else "partial_failure",
+            status="success" if failure_count == 0 else "partial_failure",
             job="notify_members",
             notification_type="event",
             event_date=event_date,
             recipient_count=result["total_members"],
-            sent_count=result["discord_ok"],
-            failed_count=result["discord_fail"],
+            sent_count=sent_count,
+            failed_count=failure_count,
         )
         return summary
 
@@ -657,7 +686,9 @@ async def notify_members(role: str, event_date: str = "", note: str = "", custom
             parts.append(f"   地點: {ev['venue']}")
         lines.append("\n".join(parts))
 
-    lines.append("\n請告訴我要通知哪一場活動（提供日期即可），也可以直接提供自訂訊息來通知社員。")
+    lines.append(
+        "\n請告訴我要通知哪一場活動（提供日期即可），也可以直接提供自訂訊息來通知社員。"
+    )
     return "\n\n".join(lines)
 
 

@@ -24,6 +24,8 @@ from types import SimpleNamespace
 import pytest
 
 from ian.services import notifications
+from ian.domain.members import MemberTier, Platform
+from ian.services.member_service import ReminderRecipient
 
 
 def _event(**overrides):
@@ -69,35 +71,115 @@ def test_is_staff_role_matches_staff_keywords(role, expected):
 def test_send_notification_to_members_aggregates_delivery_results(
     monkeypatch, delivery_results, expected
 ):
-    bound = [
-        {"discord_id": f"discord-{index}"}
-        for index, _result in enumerate(delivery_results)
+    recipients = [
+        ReminderRecipient(
+            user_id=index,
+            name=f"Member {index}",
+            email=f"member-{index}@example.test",
+            platform=Platform.DISCORD,
+            account_id=f"discord-{index}",
+            tier=MemberTier.LECTURE_EXPLORATION,
+        )
+        for index, _result in enumerate(delivery_results, 1)
     ]
     dm_calls = []
     sleep_calls = []
     results = iter(delivery_results)
 
-    monkeypatch.setattr(notifications, "get_valid_bound_members", lambda _members: bound)
     monkeypatch.setattr(
         notifications,
-        "send_discord_dm",
-        lambda discord_id, message: dm_calls.append((discord_id, message))
-        or next(results),
+        "send_notification",
+        lambda recipient, message: (
+            dm_calls.append((recipient.account_id, message)) or next(results)
+        ),
     )
     monkeypatch.setattr(notifications.time, "sleep", sleep_calls.append)
 
-    result = notifications.send_notification_to_members("Notice", [{"raw": "member"}])
+    result = notifications.send_notification_to_members("Notice", recipients)
 
     discord_ok, discord_fail = expected
     assert result == {
-        "total_members": len(bound),
+        "total_members": len(recipients),
+        "total_recipients": len(recipients),
         "discord_ok": discord_ok,
         "discord_fail": discord_fail,
+        "fb_ok": 0,
+        "fb_fail": 0,
+        "line_ok": 0,
+        "line_fail": 0,
     }
     assert dm_calls == [
-        (f"discord-{index}", "Notice") for index in range(len(delivery_results))
+        (f"discord-{index}", "Notice") for index in range(1, len(delivery_results) + 1)
     ]
     assert sleep_calls == [0.5] * len(delivery_results)
+
+
+@pytest.mark.parametrize(
+    ("platform", "sender_name"),
+    [
+        (Platform.DISCORD, "send_discord_dm"),
+        (Platform.FB, "send_facebook_message"),
+        (Platform.LINE, "send_line_message"),
+    ],
+)
+def test_send_notification_dispatches_by_platform(monkeypatch, platform, sender_name):
+    calls = []
+    target = ReminderRecipient(
+        user_id=1,
+        name="Member",
+        email="member@example.test",
+        platform=platform,
+        account_id="account-1",
+        tier=MemberTier.LECTURE_EXPLORATION,
+    )
+    monkeypatch.setattr(
+        notifications,
+        sender_name,
+        lambda account_id, message: calls.append((account_id, message)) or True,
+    )
+
+    assert notifications.send_notification(target, "Notice") is True
+    assert calls == [("account-1", "Notice")]
+
+
+def test_send_facebook_message_uses_page_api(monkeypatch):
+    calls = []
+    monkeypatch.setattr(notifications, "PAGE_ACCESS_TOKEN", "page-token")
+    monkeypatch.setattr(
+        notifications.requests,
+        "post",
+        lambda url, **kwargs: (
+            calls.append((url, kwargs)) or SimpleNamespace(status_code=200)
+        ),
+    )
+
+    assert notifications.send_facebook_message("fb-1", "Notice") is True
+    assert calls[0][0].endswith("/me/messages")
+    assert calls[0][1]["params"] == {"access_token": "page-token"}
+    assert calls[0][1]["json"] == {
+        "recipient": {"id": "fb-1"},
+        "message": {"text": "Notice"},
+    }
+
+
+def test_send_line_message_uses_push_api(monkeypatch):
+    calls = []
+    monkeypatch.setattr(notifications, "LINE_CHANNEL_ACCESS_TOKEN", "line-token")
+    monkeypatch.setattr(
+        notifications.requests,
+        "post",
+        lambda url, **kwargs: (
+            calls.append((url, kwargs)) or SimpleNamespace(status_code=200)
+        ),
+    )
+
+    assert notifications.send_line_message("line-1", "Notice") is True
+    assert calls[0][0].endswith("/v2/bot/message/push")
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer line-token"
+    assert calls[0][1]["json"] == {
+        "to": "line-1",
+        "messages": [{"type": "text", "text": "Notice"}],
+    }
 
 
 @pytest.mark.parametrize(
@@ -129,8 +211,10 @@ def test_send_discord_dm_emits_redacted_delivery_result(
     monkeypatch.setattr(
         notifications.discord_api,
         "send_channel_message",
-        lambda channel_id, message: send_calls.append((channel_id, message))
-        or SimpleNamespace(status_code=send_status, text="private send response"),
+        lambda channel_id, message: (
+            send_calls.append((channel_id, message))
+            or SimpleNamespace(status_code=send_status, text="private send response")
+        ),
     )
 
     result = notifications.send_discord_dm("user-1", "private message")
@@ -169,8 +253,10 @@ def test_send_discord_channel_message_handles_response_statuses(
     monkeypatch.setattr(
         notifications.discord_api,
         "send_channel_message",
-        lambda channel_id, message: calls.append((channel_id, message))
-        or SimpleNamespace(status_code=status_code, text="response body"),
+        lambda channel_id, message: (
+            calls.append((channel_id, message))
+            or SimpleNamespace(status_code=status_code, text="response body")
+        ),
     )
 
     assert notifications.send_discord_channel_message("channel-1", "Notice") is expected
@@ -210,7 +296,9 @@ def test_send_log_is_noop_when_not_configured(monkeypatch, token, channel_id):
     monkeypatch.setattr(
         notifications,
         "send_discord_channel_message",
-        lambda *_: (_ for _ in ()).throw(AssertionError("Discord should not be called")),
+        lambda *_: (_ for _ in ()).throw(
+            AssertionError("Discord should not be called")
+        ),
     )
 
     assert notifications.send_log("log message") is None

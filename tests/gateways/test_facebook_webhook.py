@@ -75,15 +75,7 @@ def test_handle_facebook_messages_skips_nonprocessable_messages(
     )
 
     facebook_webhook.handle_facebook_messages(
-        {
-            "entry": [
-                {
-                    "messaging": [
-                        {"sender": {"id": "sender-1"}, "message": message}
-                    ]
-                }
-            ]
-        }
+        {"entry": [{"messaging": [{"sender": {"id": "sender-1"}, "message": message}]}]}
     )
 
     assert facebook_webhook.PROCESSED_MESSAGES == expected_processed_messages
@@ -137,34 +129,6 @@ def test_handle_facebook_messages_routes_new_message_to_background_task(
 
 
 @pytest.mark.parametrize(
-    ("csv_content", "username", "expected"),
-    [
-        pytest.param(
-            "FB帳號,角色\nAlice,幹部\nBob,社員\n",
-            " Alice ",
-            "幹部",
-            id="matching-member",
-        ),
-        pytest.param(
-            "FB帳號,姓名\nAlice,Alice Chen\n",
-            "Alice",
-            "非社員",
-            id="missing-role-column",
-        ),
-        pytest.param(None, "Alice", "非社員", id="missing-file"),
-    ],
-)
-def test_get_member_mapping_handles_csv_sources(
-    tmp_path, csv_content, username, expected
-):
-    source = tmp_path / "member-mapping.csv"
-    if csv_content is not None:
-        source.write_text(csv_content, encoding="utf-8")
-
-    assert facebook_webhook.get_member_mapping(username, str(source)) == expected
-
-
-@pytest.mark.parametrize(
     ("mid", "reaction_emoji", "expected_reactions"),
     [
         pytest.param("mid-1", "🙏", [("sender-1", "mid-1", "🙏")], id="reaction"),
@@ -188,10 +152,13 @@ def test_process_message_task_handles_no_response_reactions(
             reaction_emoji=reaction_emoji,
         )
 
+    async def find_member(*_args):
+        return None
+
     monkeypatch.setattr(facebook_webhook, "send_typing_indicator", fake_typing)
     monkeypatch.setattr(facebook_webhook, "get_fb_user_profile", lambda _id: "Alice")
     monkeypatch.setattr(
-        facebook_webhook, "get_member_role_from_db", lambda *_args: "社員"
+        facebook_webhook.member_service, "find_user_by_platform", find_member
     )
     monkeypatch.setattr(facebook_webhook, "run_agent_message_flow", fake_agent)
     monkeypatch.setattr(
