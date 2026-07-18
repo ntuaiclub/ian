@@ -30,7 +30,6 @@ from ian.config import TZ_TPE
 
 _VALID_SUBSCRIBE_PLATFORMS = {"discord", "fb", "line"}
 PERSONAL_PROMPT_MAX_LEN = 100
-SUBSCRIBE_PLATFORM_ORDER = ("discord", "fb", "line")
 
 
 class MemberDataError(ValueError):
@@ -88,28 +87,17 @@ class MemberTier(IntEnum):
 
 
 def normalize_subscribe(value: str | None) -> str | None:
-    """Normalize a comma-separated MCP subscription string."""
+    """Normalize a single MCP notification platform."""
     if value is None:
         return None
-    raw = value.strip()
-    if not raw:
+    normalized = value.strip().lower()
+    if not normalized:
         raise MemberDataError("subscribe 不可為空字串，取消訂閱請使用 null")
-
-    parts = raw.split(",")
-    normalized = [part.strip().lower() for part in parts]
-    if any(not part for part in normalized):
-        raise MemberDataError("subscribe 不可包含空的平台")
-
-    invalid = sorted(
-        {part for part in normalized if part not in _VALID_SUBSCRIBE_PLATFORMS}
-    )
-    if invalid:
-        raise MemberDataError(f"不支援的訂閱平台: {', '.join(invalid)}")
-
-    selected = set(normalized)
-    return ",".join(
-        platform for platform in SUBSCRIBE_PLATFORM_ORDER if platform in selected
-    )
+    if "," in normalized:
+        raise MemberDataError("subscribe 僅能指定一個平台")
+    if normalized not in _VALID_SUBSCRIBE_PLATFORMS:
+        raise MemberDataError(f"不支援的訂閱平台: {normalized}")
+    return normalized
 
 
 class Membership(BaseModel):
@@ -173,10 +161,10 @@ class User(BaseModel):
     def member_role(self, now: datetime | None = None) -> str:
         return self.effective_tier(now).label
 
-    def subscribed_platforms(self) -> tuple[Platform, ...]:
+    def subscribed_platform(self) -> Platform | None:
         if self.subscribe is None:
-            return ()
-        return tuple(Platform(part) for part in self.subscribe.split(","))
+            return None
+        return Platform(self.subscribe)
 
 
 def normalize_email(email: str) -> str:

@@ -410,14 +410,14 @@ async def update_subscribe(
     系統每天 19:00 會自動通知隔日課程給訂閱者。
 
     注意：
-    - 支援 discord、fb、line，可用逗號分隔多選
+    - 僅能選擇 discord、fb、line 其中一個平台
     - 使用者必須已綁定該平台帳號才能訂閱該平台的通知
     - 傳入 null 表示取消所有訂閱
 
     Args:
         platform: 使用者所在的平台（Discord、FB、LINE），從系統訊息中取得 Platform
         account_id: 使用者在該平台上的唯一帳號 ID，從系統訊息中取得 Account ID
-        subscribe: 逗號分隔的平台集合（discord、fb、line），null 表示取消所有訂閱
+        subscribe: 單一平台（discord、fb、line），null 表示取消訂閱
     """
     try:
         result = await member_service.update_user_subscription(

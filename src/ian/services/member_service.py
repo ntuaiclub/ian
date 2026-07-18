@@ -185,15 +185,11 @@ class MemberService:
             return OperationResult(False, str(error))
 
         if normalized is not None:
-            missing = [
-                subscribed.value
-                for subscribed in (Platform(value) for value in normalized.split(","))
-                if not getattr(user, subscribed.account_field)
-            ]
-            if missing:
+            subscribed_platform = Platform(normalized)
+            if not getattr(user, subscribed_platform.account_field):
                 return OperationResult(
                     False,
-                    f"您尚未綁定 {', '.join(missing)} 帳號，無法訂閱。",
+                    f"您尚未綁定 {subscribed_platform.value} 帳號，無法訂閱。",
                 )
 
         updated = await self.repository.update_user(
@@ -206,7 +202,7 @@ class MemberService:
             return OperationResult(True, "已取消所有通知訂閱。")
         return OperationResult(
             True,
-            f"訂閱設定已更新：{', '.join(normalized.split(','))}",
+            f"訂閱設定已更新：{normalized}",
         )
 
     async def update_personal_prompt(
@@ -238,22 +234,24 @@ class MemberService:
             tier = user.effective_tier(now)
             if tier == MemberTier.NON_MEMBER:
                 continue
-            for subscribed_platform in user.subscribed_platforms():
-                account_id = getattr(user, subscribed_platform.account_field)
-                if not account_id:
-                    raise MemberDataError(
-                        f"user {user.id} subscribes to an unbound platform"
-                    )
-                recipients.append(
-                    ReminderRecipient(
-                        user_id=user.id,
-                        name=user.name,
-                        email=user.email,
-                        platform=subscribed_platform,
-                        account_id=account_id,
-                        tier=tier,
-                    )
+            subscribed_platform = user.subscribed_platform()
+            if subscribed_platform is None:
+                continue
+            account_id = getattr(user, subscribed_platform.account_field)
+            if not account_id:
+                raise MemberDataError(
+                    f"user {user.id} subscribes to an unbound platform"
                 )
+            recipients.append(
+                ReminderRecipient(
+                    user_id=user.id,
+                    name=user.name,
+                    email=user.email,
+                    platform=subscribed_platform,
+                    account_id=account_id,
+                    tier=tier,
+                )
+            )
         return recipients
 
 

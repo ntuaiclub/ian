@@ -91,7 +91,7 @@ ntuai-watson-agent/
 | `course_retreviler` | 課程 / 活動資料語意搜尋 | `platform`, `account_id`, `query`, `channel_id` |
 | `qa_retreviler` | 社團 FAQ 混合搜尋 (BM25 + Semantic) | `query`, `top_k` |
 | `notify_staff` | 幹部通知（透過 Discord 頻道） | `message`, `user_name`, `platform`, `context` |
-| `notify_members` | 幹部依社員訂閱發送多平台通知 | `role`, `event_date`, `note`, `custom_message` |
+| `notify_members` | 幹部依每位社員選定的平台發送通知 | `role`, `event_date`, `note`, `custom_message` |
 | `generate_checkin_code` | 產生使用者專屬的活動簽到碼連結 | `platform`, `account_id`, `name`, `email` |
 | `bind_email` | 透過 Email 綁定社員身分 | `email`, `platform`, `account_id` |
 | `update_subscribe` | 更新每日課程通知訂閱設定（discord、fb、line） | `platform`, `account_id`, `subscribe` |
@@ -113,13 +113,13 @@ ntuai-watson-agent/
 - **活動通知模式**：選擇課程資料庫中的活動，自動帶入完整資訊（日期、時間、地點、講者、大綱等）發送給所有綁定社員。
 - **自訂通知模式**：直接提供自訂訊息內容，不需選擇活動。
 - 未指定活動時，自動列出即將舉辦的 3 場活動供選擇。
-- 依社員的 `subscribe` 字串展開至 Discord、Facebook、LINE 發送。
+- 依每位社員的單一 `subscribe` 平台，透過 Discord、Facebook 或 LINE 發送。
 
 ### Daily Event Reminder (`ian.services.reminder_runner`)
 
 - 每日 **19:00 UTC+8** 自動檢查隔天是否有活動，若有則 DM 通知所有已綁定帳號的有效社員。
 - 通知內容包含完整活動資訊（課程大綱、講者、是否直播/錄影、講義連結、課程對象等），自動處理空值。
-- 依社員的 `subscribe` 字串透過 Discord、Facebook、LINE 發送。
+- 依每位社員的單一 `subscribe` 平台，透過 Discord、Facebook 或 LINE 發送。
 - 支援個人化簽到連結（`QuickRecord`）。
 - 支援 `--daemon` 模式（容器內常駐）、`--dry` 模擬執行、`--date` 指定日期檢查。
 - 發送結果記錄至 Discord Log Channel。
@@ -129,7 +129,7 @@ ntuai-watson-agent/
 - `ntuai.dev` 的 Users 與 Memberships 是社員資料唯一來源；不匯入、不讀取本地舊資料。
 - 支援依 Discord、Facebook、LINE account ID 或已驗證 Email 查詢與綁定。
 - tier 0 為非社員／過期；tier 1、2、3 分別為講座探索、動手實作、專案實作。
-- `subscribe` 是 `discord`、`fb`、`line` 組成的逗號分隔字串，`null` 代表取消全部。
+- `subscribe` 只能是 `discord`、`fb`、`line` 其中一個字串，`null` 代表取消訂閱。
 - `personal_prompt` 是最多 100 字的使用者備註，供 Agent 注入 `User note`。
 - MCP response 進入 runtime 前會經 Pydantic schema、時區與單一有效會籍檢查。
 

@@ -75,14 +75,18 @@ def user(*, memberships: list[Membership] | None = None, subscribe=None) -> User
     [
         (None, None),
         ("discord", "discord"),
-        (" LINE,discord, fb,LINE ", "discord,fb,line"),
+        (" LINE ", "line"),
+        (" FB ", "fb"),
     ],
 )
 def test_normalize_subscribe_canonicalizes_supported_platforms(raw, expected):
     assert normalize_subscribe(raw) == expected
 
 
-@pytest.mark.parametrize("raw", ["", " ", "discord,", "slack", "fb,,line"])
+@pytest.mark.parametrize(
+    "raw",
+    ["", " ", "discord,", "slack", "fb,line", "discord,discord"],
+)
 def test_normalize_subscribe_rejects_invalid_values(raw):
     with pytest.raises(MemberDataError):
         normalize_subscribe(raw)
@@ -144,15 +148,15 @@ def test_multiple_active_memberships_fail_closed():
         member.effective_tier(NOW)
 
 
-def test_user_normalizes_subscribe_and_exposes_platforms():
-    member = user(subscribe=" line,discord,fb ")
+def test_user_normalizes_subscribe_and_exposes_platform():
+    member = user(subscribe=" LINE ")
 
-    assert member.subscribe == "discord,fb,line"
-    assert member.subscribed_platforms() == (
-        Platform.DISCORD,
-        Platform.FB,
-        Platform.LINE,
-    )
+    assert member.subscribe == "line"
+    assert member.subscribed_platform() is Platform.LINE
+
+
+def test_user_without_subscription_has_no_subscribed_platform():
+    assert user().subscribed_platform() is None
 
 
 def test_normalize_email_lowercases_complete_address():

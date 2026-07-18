@@ -156,8 +156,8 @@ async def test_bind_updates_unbound_platform_and_verifies_result():
 
 
 @pytest.mark.asyncio
-async def test_subscription_requires_every_selected_platform_to_be_bound():
-    member = make_user(line_acc_id=None)
+async def test_subscription_rejects_multiple_platforms():
+    member = make_user()
     repository = FakeRepository([member])
     service = MemberService(repository)
 
@@ -166,24 +166,34 @@ async def test_subscription_requires_every_selected_platform_to_be_bound():
     )
 
     assert not result.success
-    assert "line" in result.message
+    assert "僅能指定一個平台" in result.message
     assert repository.updates == []
 
 
 @pytest.mark.asyncio
-async def test_subscription_normalizes_multiplatform_value_and_clears_with_none():
+async def test_subscription_requires_selected_platform_to_be_bound():
+    repository = FakeRepository([make_user(line_acc_id=None)])
+    service = MemberService(repository)
+
+    result = await service.update_user_subscription("Discord", "discord-10", "line")
+
+    assert not result.success
+    assert "尚未綁定 line 帳號" in result.message
+    assert repository.updates == []
+
+
+@pytest.mark.asyncio
+async def test_subscription_normalizes_single_platform_and_clears_with_none():
     repository = FakeRepository([make_user()])
     service = MemberService(repository)
 
-    update = await service.update_user_subscription(
-        "Discord", "discord-10", " line,discord,fb,line "
-    )
+    update = await service.update_user_subscription("Discord", "discord-10", " LINE ")
     clear = await service.update_user_subscription("Discord", "discord-10", None)
 
     assert update.success
     assert clear.success
     assert repository.updates == [
-        (10, {"subscribe": "discord,fb,line"}),
+        (10, {"subscribe": "line"}),
         (10, {"subscribe": None}),
     ]
 
@@ -207,17 +217,36 @@ async def test_personal_prompt_is_trimmed_truncated_and_clearable():
 
 
 @pytest.mark.asyncio
-async def test_reminder_recipients_expand_subscriptions_by_platform():
-    subscribed = make_user(subscribe="discord,fb,line")
-    nonmember = make_user(user_id=11, tier=0, subscribe="discord")
-    service = MemberService(FakeRepository([subscribed, nonmember]))
+async def test_reminder_recipients_use_each_users_single_platform():
+    service = MemberService(
+        FakeRepository(
+            [
+                make_user(subscribe="discord"),
+                make_user(
+                    user_id=11,
+                    subscribe="fb",
+                    discord_acc_id="discord-11",
+                    fb_acc_id="fb-11",
+                    line_acc_id="line-11",
+                ),
+                make_user(
+                    user_id=12,
+                    subscribe="line",
+                    discord_acc_id="discord-12",
+                    fb_acc_id="fb-12",
+                    line_acc_id="line-12",
+                ),
+                make_user(user_id=13, tier=0, subscribe="discord"),
+            ]
+        )
+    )
 
     recipients = await service.list_reminder_recipients(NOW)
 
     assert [(item.platform, item.account_id) for item in recipients] == [
         (Platform.DISCORD, "discord-10"),
-        (Platform.FB, "fb-10"),
-        (Platform.LINE, "line-10"),
+        (Platform.FB, "fb-11"),
+        (Platform.LINE, "line-12"),
     ]
 
 
