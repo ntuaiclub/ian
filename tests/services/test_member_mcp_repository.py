@@ -30,6 +30,7 @@ from ian.services.member_mcp_repository import (
     MemberMcpRepository,
     MemberRepositoryError,
     MemberSchemaError,
+    MemberTransportError,
     StreamableHttpMcpToolCaller,
     parse_payload_documents,
 )
@@ -157,3 +158,40 @@ async def test_update_user_calls_mcp_and_reads_back():
     assert caller.calls[0][0] == "updateUsers"
     assert caller.calls[0][1]["id"] == 10
     assert caller.calls[0][1]["personal_prompt"] == "concise"
+
+
+@pytest.mark.asyncio
+async def test_update_user_confirms_ambiguous_transport_failure_by_read_back():
+    updated_doc = {**user_doc(), "discord_acc_id": "discord-new"}
+
+    class AmbiguousCaller(QueueCaller):
+        async def call_tool(self, name: str, arguments: dict) -> str:
+            self.calls.append((name, arguments))
+            if name == "updateUsers":
+                raise MemberTransportError("connection lost after write")
+            return self.responses.popleft()
+
+    caller = AmbiguousCaller(mcp_text(updated_doc), mcp_text(membership_doc()))
+    repository = MemberMcpRepository(caller)
+
+    updated = await repository.update_user(10, {"discord_acc_id": "discord-new"})
+
+    assert updated.discord_acc_id == "discord-new"
+
+
+@pytest.mark.asyncio
+async def test_update_user_preserves_transport_failure_when_read_back_differs():
+    current_doc = {**user_doc(), "discord_acc_id": None}
+
+    class FailedCaller(QueueCaller):
+        async def call_tool(self, name: str, arguments: dict) -> str:
+            self.calls.append((name, arguments))
+            if name == "updateUsers":
+                raise MemberTransportError("connection lost before write")
+            return self.responses.popleft()
+
+    caller = FailedCaller(mcp_text(current_doc), mcp_text(membership_doc()))
+    repository = MemberMcpRepository(caller)
+
+    with pytest.raises(MemberTransportError):
+        await repository.update_user(10, {"discord_acc_id": "discord-new"})

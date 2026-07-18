@@ -318,8 +318,17 @@ class MemberMcpRepository:
             "select": json.dumps(USER_SELECT, separators=(",", ":")),
             **fields,
         }
-        await self._call_documents("updateUsers", arguments)
+        transport_error: MemberTransportError | None = None
+        try:
+            await self._call_documents("updateUsers", arguments)
+        except MemberTransportError as error:
+            transport_error = error
+
         updated = await self.find_user_by_id(user_id)
         if updated is None:
             raise MemberSchemaError("updated user could not be read back")
+        if transport_error is not None and any(
+            getattr(updated, field) != value for field, value in fields.items()
+        ):
+            raise transport_error
         return updated
