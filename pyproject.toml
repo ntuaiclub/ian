@@ -8,6 +8,7 @@ license = "GPL-3.0-or-later"
 dependencies = [
     "flask[async]",
     "requests",
+    "httpx",
     "discord",
     "line-bot-sdk",
     "typer",
@@ -41,6 +42,7 @@ dev = [
     "pre-commit",
     "pre-commit-hooks",
     "pytest",
+    "pytest-asyncio",
     "pytest-cov>=7.1.0",
     "ruff",
 ]

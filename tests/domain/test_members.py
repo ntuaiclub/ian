@@ -84,8 +84,8 @@ def test_platform_field_mapping_handles_supported_and_unknown_platforms(
     assert platform_field(platform) == expected
 
 
-def test_normalize_email_lowercases_local_part_only():
-    assert normalize_email(" USER.Name@Example.COM ") == "user.name@Example.COM"
+def test_normalize_email_lowercases_complete_address():
+    assert normalize_email(" USER.Name@Example.COM ") == "user.name@example.com"
 
 
 @pytest.mark.parametrize(
@@ -106,11 +106,7 @@ def test_parse_subscribe_platforms_trims_lowercases_deduplicates_and_sorts(
 
 
 def test_invalid_subscribe_platforms_preserves_invalid_entries_for_messages():
-    assert invalid_subscribe_platforms(" Discord, line, fb, LINE ") == [
-        "line",
-        "fb",
-        "line",
-    ]
+    assert invalid_subscribe_platforms(" Discord, line, fb, LINE, slack ") == ["slack"]
 
 
 def test_normalize_personal_prompt_strips_and_truncates_to_limit():

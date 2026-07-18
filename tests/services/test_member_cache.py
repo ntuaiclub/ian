@@ -23,7 +23,9 @@ from ian.services.member_cache import MemberCache
 
 def test_member_cache_loads_and_saves_json_file(tmp_path):
     cache_file = tmp_path / "member_db.json"
-    cache_file.write_text('[{"id": "Alice", "email": "alice@example.com"}]', encoding="utf-8")
+    cache_file.write_text(
+        '[{"id": "Alice", "email": "alice@example.com"}]', encoding="utf-8"
+    )
     cache = MemberCache(cache_file)
 
     assert cache.load() == [{"id": "Alice", "email": "alice@example.com"}]
@@ -32,12 +34,7 @@ def test_member_cache_loads_and_saves_json_file(tmp_path):
     cache.save()
 
     assert cache_file.read_text(encoding="utf-8") == (
-        '[\n'
-        '  {\n'
-        '    "id": "Bob",\n'
-        '    "email": "bob@example.com"\n'
-        '  }\n'
-        ']'
+        '[\n  {\n    "id": "Bob",\n    "email": "bob@example.com"\n  }\n]'
     )
 
 
@@ -65,7 +62,7 @@ def test_member_cache_finds_members_by_platform_and_email(tmp_path):
     assert cache.find_by_platform("Discord", "missing") is None
     assert cache.find_by_platform("Slack", "discord-1") is None
     assert cache.find_by_email("alice@Example.COM")["id"] == "Alice"
-    assert cache.find_by_email("ALICE@example.com") is None
+    assert cache.find_by_email("ALICE@example.com")["id"] == "Alice"
 
 
 def test_member_cache_update_field_mutates_matching_email_only(tmp_path):

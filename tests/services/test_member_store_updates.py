@@ -148,9 +148,7 @@ def test_bind_email_returns_existing_binding_as_success(monkeypatch, install_cac
     install_cache([_member()])
     monkeypatch.setattr(member_store, "update_member_fields", _reject_api_call)
 
-    result = member_store.bind_email(
-        "alice@example.test", "Discord", "discord-1"
-    )
+    result = member_store.bind_email("alice@example.test", "Discord", "discord-1")
 
     assert result["success"] is True
     assert "已經綁定" in result["message"]
@@ -165,9 +163,7 @@ def test_bind_email_updates_api_and_isolated_cache(monkeypatch, install_cache):
         lambda api_url, api_key, email, fields: api_calls.append((email, fields)),
     )
 
-    result = member_store.bind_email(
-        "alice@example.test", "Discord", "discord-new"
-    )
+    result = member_store.bind_email("alice@example.test", "Discord", "discord-new")
 
     assert result["success"] is True
     assert "綁定成功" in result["message"]
@@ -180,7 +176,11 @@ def test_bind_email_updates_api_and_isolated_cache(monkeypatch, install_cache):
     ("error", "expected_message"),
     [
         pytest.param(MemberApiError("locked"), "API 更新失敗: locked", id="api-error"),
-        pytest.param(RuntimeError("unavailable"), "綁定時發生錯誤: unavailable", id="unexpected-error"),
+        pytest.param(
+            RuntimeError("unavailable"),
+            "綁定時發生錯誤: unavailable",
+            id="unexpected-error",
+        ),
     ],
 )
 def test_bind_email_reports_api_failures(
@@ -193,9 +193,7 @@ def test_bind_email_reports_api_failures(
 
     monkeypatch.setattr(member_store, "update_member_fields", fail)
 
-    result = member_store.bind_email(
-        "alice@example.test", "Discord", "discord-new"
-    )
+    result = member_store.bind_email("alice@example.test", "Discord", "discord-new")
 
     assert result == {"success": False, "message": expected_message}
     assert cache.find_by_email("alice@example.test")["discord_acc_id"] == ""
@@ -212,9 +210,7 @@ def test_bind_email_continues_when_local_cache_save_fails(
         lambda: (_ for _ in ()).throw(OSError("disk full")),
     )
 
-    result = member_store.bind_email(
-        "alice@example.test", "Discord", "discord-new"
-    )
+    result = member_store.bind_email("alice@example.test", "Discord", "discord-new")
 
     assert result["success"] is True
     assert cache.find_by_email("alice@example.test")["discord_acc_id"] == "discord-new"
@@ -271,9 +267,9 @@ def test_bind_email_continues_when_local_cache_save_fails(
             _member(),
             "Discord",
             "discord-1",
-            "line",
+            "slack",
             False,
-            "不支援的平台: line",
+            "不支援的平台: slack",
             None,
             id="invalid-platform",
         ),
@@ -411,7 +407,9 @@ def test_update_personal_prompt_normalizes_and_saves(
 
     assert result == {"success": True, "message": "已更新使用者個性備註。"}
     assert api_calls == [("alice@example.test", {"personal_prompt": expected_value})]
-    assert cache.find_by_email("alice@example.test")["personal_prompt"] == expected_value
+    assert (
+        cache.find_by_email("alice@example.test")["personal_prompt"] == expected_value
+    )
 
 
 def test_update_personal_prompt_reports_api_failure(monkeypatch, install_cache):
