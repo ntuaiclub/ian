@@ -35,7 +35,7 @@ from ian.domain.courses import (
     normalize_date,
     parse_dates_from_query,
 )
-from ian.utils.console import eprint
+from ian.utils.logging import elapsed_ms, log_event
 
 
 course_data = None
@@ -76,10 +76,22 @@ def _load_from_cache() -> pd.DataFrame:
         df = pd.read_csv(COURSE_CACHE_FILE)
         course_data = df
         last_course_update = _get_cache_timestamp()
-        eprint(f"[快取] 從本地快取載入課程資料，共 {len(df)} 筆記錄")
+        log_event(
+            "cache_loaded",
+            "course_catalog",
+            status="success",
+            record_count=len(df),
+        )
         return df
     except Exception as e:
-        eprint(f"[快取] 讀取快取失敗: {e}")
+        log_event(
+            "cache_failed",
+            "course_catalog",
+            level="warning",
+            status="failure",
+            operation="load",
+            error=e,
+        )
         return None
 
 
@@ -88,15 +100,31 @@ def _save_to_cache(df: pd.DataFrame, timestamp: float):
         os.makedirs(str(CACHE_DIR), exist_ok=True)
         df.to_csv(COURSE_CACHE_FILE, index=False, encoding="utf-8")
         _save_cache_timestamp(timestamp)
-        eprint("[快取] 課程資料已儲存到本地快取")
+        log_event("cache_saved", "course_catalog", status="success")
     except Exception as e:
-        eprint(f"[快取] 儲存快取失敗: {e}")
+        log_event(
+            "cache_failed",
+            "course_catalog",
+            level="warning",
+            status="failure",
+            operation="save",
+            error=e,
+        )
 
 
 def _fetch_from_url(url: str, max_retries: int = 3) -> pd.DataFrame:
     for attempt in range(max_retries):
+        attempt_number = attempt + 1
+        started_at = time.monotonic()
         try:
-            eprint(f"[網路] 正在從 Google Sheets 載入課程資料... (嘗試 {attempt + 1}/{max_retries})")
+            log_event(
+                "external_fetch_started",
+                "course_catalog",
+                status="started",
+                source="course_data",
+                attempt=attempt_number,
+                max_attempts=max_retries,
+            )
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
             }
@@ -106,7 +134,12 @@ def _fetch_from_url(url: str, max_retries: int = 3) -> pd.DataFrame:
             df = pd.read_csv(io.StringIO(response.text))
 
             if any(r"\x" in str(col) for col in df.columns):
-                eprint("偵測到編碼問題，嘗試修復...")
+                log_event(
+                    "encoding_repair_started",
+                    "course_catalog",
+                    status="started",
+                    source="course_data",
+                )
                 try:
                     response_bytes = requests.get(url, headers=headers, timeout=30).content
                     for encoding in ["utf-8", "utf-8-sig", "big5", "gb2312"]:
@@ -114,36 +147,79 @@ def _fetch_from_url(url: str, max_retries: int = 3) -> pd.DataFrame:
                             decoded_text = response_bytes.decode(encoding)
                             df = pd.read_csv(io.StringIO(decoded_text))
                             if not any(r"\x" in str(col) for col in df.columns):
-                                eprint(f"編碼修復成功，使用編碼: {encoding}")
+                                log_event(
+                                    "encoding_repair_completed",
+                                    "course_catalog",
+                                    status="success",
+                                    encoding=encoding,
+                                )
                                 break
                         except (UnicodeDecodeError, UnicodeError):
                             continue
                     else:
-                        eprint("無法自動修復編碼問題")
+                        log_event(
+                            "encoding_repair_failed",
+                            "course_catalog",
+                            level="warning",
+                            status="failure",
+                            reason="unsupported_encoding",
+                        )
                 except Exception as e:
-                    eprint(f"編碼修復失敗: {e}")
+                    log_event(
+                        "encoding_repair_failed",
+                        "course_catalog",
+                        level="warning",
+                        status="failure",
+                        error=e,
+                    )
 
-            eprint(f"[網路] 課程資料載入成功，共 {len(df)} 筆記錄")
+            log_event(
+                "external_fetch_completed",
+                "course_catalog",
+                status="success",
+                duration_ms=elapsed_ms(started_at),
+                source="course_data",
+                attempt=attempt_number,
+                record_count=len(df),
+            )
             return df
         except requests.exceptions.RequestException as e:
-            eprint(f"網路請求錯誤 (嘗試 {attempt + 1}/{max_retries}): {e}")
+            _log_fetch_failure(started_at, attempt_number, max_retries, e)
             if attempt < max_retries - 1:
                 time.sleep(2**attempt)
         except pd.errors.EmptyDataError as e:
-            eprint(f"CSV 資料為空 (嘗試 {attempt + 1}/{max_retries}): {e}")
+            _log_fetch_failure(started_at, attempt_number, max_retries, e)
             if attempt < max_retries - 1:
                 time.sleep(2**attempt)
         except pd.errors.ParserError as e:
-            eprint(f"CSV 解析錯誤 (嘗試 {attempt + 1}/{max_retries}): {e}")
+            _log_fetch_failure(started_at, attempt_number, max_retries, e)
             if attempt < max_retries - 1:
                 time.sleep(2**attempt)
         except Exception as e:
-            eprint(f"載入課程資料時發生未預期錯誤 (嘗試 {attempt + 1}/{max_retries}): {type(e).__name__} - {e}")
+            _log_fetch_failure(started_at, attempt_number, max_retries, e)
             if attempt < max_retries - 1:
                 time.sleep(2**attempt)
 
-    eprint("[網路] 所有嘗試均失敗，無法載入課程資料")
     return None
+
+
+def _log_fetch_failure(
+    started_at: float,
+    attempt: int,
+    max_attempts: int,
+    error: Exception,
+) -> None:
+    log_event(
+        "external_fetch_failure",
+        "course_catalog",
+        level="warning",
+        status="retrying" if attempt < max_attempts else "failure",
+        duration_ms=elapsed_ms(started_at),
+        source="course_data",
+        attempt=attempt,
+        max_attempts=max_attempts,
+        error=error,
+    )
 
 
 def load_course_data_from_url(url: str, max_retries: int = 3) -> pd.DataFrame:
@@ -153,9 +229,21 @@ def load_course_data_from_url(url: str, max_retries: int = 3) -> pd.DataFrame:
         return _load_from_cache()
 
     if not url:
-        eprint("[設定] COURSE_DATA_URL is not configured")
+        log_event(
+            "configuration_invalid",
+            "course_catalog",
+            level="warning",
+            status="missing",
+            setting="course_data_url",
+        )
         if os.path.exists(COURSE_CACHE_FILE):
-            eprint("[快取] 使用過期的本地快取")
+            log_event(
+                "cache_fallback",
+                "course_catalog",
+                level="warning",
+                status="stale",
+                reason="missing_configuration",
+            )
             return _load_from_cache()
         return None
 
@@ -169,7 +257,13 @@ def load_course_data_from_url(url: str, max_retries: int = 3) -> pd.DataFrame:
         return df
 
     if os.path.exists(COURSE_CACHE_FILE):
-        eprint("[快取] 網路載入失敗，使用過期的本地快取")
+        log_event(
+            "cache_fallback",
+            "course_catalog",
+            level="warning",
+            status="stale",
+            reason="external_fetch_failed",
+        )
         return _load_from_cache()
 
     return None
