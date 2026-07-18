@@ -276,7 +276,7 @@ def test_structured_logger_records_error_type_without_error_message():
 
     logger.emit(
         "operation_failed",
-        "member_store",
+        "member_mcp_repository",
         level="error",
         status="error",
         error=RuntimeError("token-123 leaked"),

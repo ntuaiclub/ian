@@ -30,6 +30,8 @@ from ian.domain.members import (
     MembershipIntegrityError,
     Platform,
     User,
+    normalize_email,
+    normalize_personal_prompt,
     normalize_subscribe,
 )
 
@@ -151,3 +153,11 @@ def test_user_normalizes_subscribe_and_exposes_platforms():
         Platform.FB,
         Platform.LINE,
     )
+
+
+def test_normalize_email_lowercases_complete_address():
+    assert normalize_email(" USER.Name@Example.COM ") == "user.name@example.com"
+
+
+def test_normalize_personal_prompt_strips_and_truncates_to_limit():
+    assert normalize_personal_prompt(f"  {'a' * 101}  ") == "a" * 100

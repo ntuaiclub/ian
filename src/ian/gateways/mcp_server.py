@@ -545,7 +545,7 @@ async def notify_members(
     role: str, event_date: str = "", note: str = "", custom_message: str = ""
 ) -> str:
     """
-    幹部專用工具：發送通知給所有已綁定帳號的有效社員（透過 Discord DM）。
+    幹部專用工具：依有效社員的 subscribe 設定發送 Discord、Facebook、LINE 通知。
 
     權限限制：僅限角色包含「社長」、「部長」、「部員」等幹部身分的使用者使用。
     系統會以硬邏輯檢查角色字串，非幹部無法使用此功能。

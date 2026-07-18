@@ -27,7 +27,6 @@ from ian.domain.reminders import (
     clean_value,
     find_events_on_date,
     format_reminder_message,
-    get_valid_bound_members,
     seconds_until_next_run,
 )
 
@@ -51,53 +50,16 @@ def _event(**overrides):
     return event
 
 
-def test_get_valid_bound_members_filters_expired_unsubscribed_and_unbound_members():
-    now = datetime(2026, 3, 7, 12, 0, tzinfo=timezone(timedelta(hours=8)))
-    future = now + timedelta(days=1)
-    past = now - timedelta(days=1)
-    members = [
-        {
-            "valid_date": future.isoformat(),
-            "subscribe": "discord",
-            "discord_acc_id": "123",
-            "name": "Subscribed",
-            "email": "subscribed@example.com",
-            "Tier": "VIP",
-        },
-        {
-            "valid_date": past.isoformat(),
-            "subscribe": "discord",
-            "discord_acc_id": "456",
-            "name": "Expired",
-        },
-        {
-            "valid_date": future.isoformat(),
-            "subscribe": "",
-            "discord_acc_id": "789",
-            "name": "Unsubscribed",
-        },
-        {
-            "valid_date": future.isoformat(),
-            "subscribe": "discord",
-            "discord_acc_id": "0",
-            "name": "Unbound",
-        },
-    ]
-
-    assert get_valid_bound_members(members, now=now) == [
-        {
-            "name": "Subscribed",
-            "email": "subscribed@example.com",
-            "tier": "VIP",
-            "discord_id": "123",
-        }
-    ]
-
-
 def test_find_events_on_date_matches_only_target_date_and_cleans_empty_values():
     df = pd.DataFrame(
         [
-            {"時間": "2026/03/07", "星期": "六", "活動時間": "-", "場地": "無", "社課主題 / 活動名稱": "Demo"},
+            {
+                "時間": "2026/03/07",
+                "星期": "六",
+                "活動時間": "-",
+                "場地": "無",
+                "社課主題 / 活動名稱": "Demo",
+            },
             {"時間": "2026/03/08", "社課主題 / 活動名稱": "Other"},
         ]
     )
@@ -172,9 +134,7 @@ def test_format_reminder_message_omits_empty_optional_event_fields():
 
 
 def test_format_reminder_message_includes_slides_when_present():
-    message = format_reminder_message(
-        [_event(slides="https://slides.example/course")]
-    )
+    message = format_reminder_message([_event(slides="https://slides.example/course")])
 
     assert "講義: https://slides.example/course" in message
 

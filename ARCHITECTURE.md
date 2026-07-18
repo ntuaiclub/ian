@@ -17,10 +17,10 @@
   └────────────┬─────────────┘    └──────────────────────────┘
                │                              ▲
                │                    ┌──────────────────────────┐
-               │                    │ Member Store             │
-               │                    │ ian.services             │
-               │                    │ Google Apps Script       │
-               │                    │ ⇄ Local JSON Cache       │
+               │                    │ Member MCP               │
+               │                    │ ntuai.dev/api/mcp        │
+               │                    │ Users + Memberships      │
+               │                    │ Single Source of Truth   │
                │                    └──────────────────────────┘
            ▼
   ┌──────────────────────────┐
@@ -36,8 +36,8 @@
 
 - **Gateway 層**：各平台入口。`ian.gateways.discord_bot` 處理 Discord Slash Commands；`ian.gateways.webhook_server` (Flask) 負責 Webhook route wiring，並委派給 `ian.gateways.facebook_webhook` 與 `ian.gateways.line_webhook` 處理 Facebook Messenger / LINE 平台細節。
 - **Host Agent Client**：`ian.services.agent` 使用 LangGraph `create_react_agent` 搭配 Google Gemini 3 Flash，透過 MCP 協定調用工具，並管理每位使用者的獨立對話 session。
-- **MCP Tool Server**：`ian.gateways.mcp_server` 以 FastMCP 框架透過 SSE 提供 RAG 搜尋、課程查詢、幹部通知、社員綁定、簽到碼產生、訂閱管理、個性備註等工具。
-- **Member DB**：`ian.services.member_store` 從 Google Apps Script API 同步社員資料至本地 JSON 快取，提供平台帳號查詢、角色辨識、Email 綁定、訂閱管理與個性備註功能。
+- **MCP Tool Server**：`ian.gateways.mcp_server` 以 FastMCP 框架透過 streamable HTTP 提供 RAG 搜尋、課程查詢、幹部通知、社員綁定、簽到碼產生、訂閱管理、個性備註等工具。
+- **Member MCP**：`ian.services.member_service` 與 `member_mcp_repository` 透過 `ntuai.dev/api/mcp` 直接讀寫 Users 與 Memberships；遠端網站是社員資料唯一來源，不使用本地社員快取。
 
 ## 專案結構
 
@@ -65,9 +65,7 @@ ntuai-watson-agent/
 ├── .env.example            # 環境變數範本
 └── data/
     ├── ntuai_zh_base.md                # Markdown 知識庫文件（RAG 資料來源）
-    ├── ntuai_recompiled_index.jsonl    # QA 知識庫（JSONL 格式）
-    ├── member_db.json                  # 社員資料本地快取
-    └── member_mapping.csv              # FB 帳號→角色 fallback 對照表
+    └── ntuai_recompiled_index.jsonl    # QA 知識庫（JSONL 格式）
 ```
 
 ## 核心元件
@@ -93,10 +91,10 @@ ntuai-watson-agent/
 | `course_retreviler` | 課程 / 活動資料語意搜尋 | `platform`, `account_id`, `query`, `channel_id` |
 | `qa_retreviler` | 社團 FAQ 混合搜尋 (BM25 + Semantic) | `query`, `top_k` |
 | `notify_staff` | 幹部通知（透過 Discord 頻道） | `message`, `user_name`, `platform`, `context` |
-| `notify_members` | 幹部發送社員通知（Discord DM） | `role`, `event_date`, `note`, `custom_message` |
+| `notify_members` | 幹部依社員訂閱發送多平台通知 | `role`, `event_date`, `note`, `custom_message` |
 | `generate_checkin_code` | 產生使用者專屬的活動簽到碼連結 | `platform`, `account_id`, `name`, `email` |
 | `bind_email` | 透過 Email 綁定社員身分 | `email`, `platform`, `account_id` |
-| `update_subscribe` | 更新每日課程通知訂閱設定（discord） | `platform`, `account_id`, `subscribe` |
+| `update_subscribe` | 更新每日課程通知訂閱設定（discord、fb、line） | `platform`, `account_id`, `subscribe` |
 | `update_personal_prompt` | 記錄使用者溝通風格與偏好（最多 100 字） | `platform`, `account_id`, `personal_prompt` |
 
 **Hybrid RAG 系統**：
@@ -115,26 +113,25 @@ ntuai-watson-agent/
 - **活動通知模式**：選擇課程資料庫中的活動，自動帶入完整資訊（日期、時間、地點、講者、大綱等）發送給所有綁定社員。
 - **自訂通知模式**：直接提供自訂訊息內容，不需選擇活動。
 - 未指定活動時，自動列出即將舉辦的 3 場活動供選擇。
-- 透過 Discord DM 發送。
+- 依社員的 `subscribe` 字串展開至 Discord、Facebook、LINE 發送。
 
 ### Daily Event Reminder (`ian.services.reminder_runner`)
 
 - 每日 **19:00 UTC+8** 自動檢查隔天是否有活動，若有則 DM 通知所有已綁定帳號的有效社員。
 - 通知內容包含完整活動資訊（課程大綱、講者、是否直播/錄影、講義連結、課程對象等），自動處理空值。
-- 透過 **Discord DM** 發送。
+- 依社員的 `subscribe` 字串透過 Discord、Facebook、LINE 發送。
 - 支援個人化簽到連結（`QuickRecord`）。
 - 支援 `--daemon` 模式（容器內常駐）、`--dry` 模擬執行、`--date` 指定日期檢查。
 - 發送結果記錄至 Discord Log Channel。
 
-### Member DB (`ian.services.member_store`)
+### Member MCP (`ian.services.member_service`)
 
-- 從 **Google Apps Script API** 同步社員資料至本地 JSON 快取。
-- 支援依平台帳號 ID（Discord / FB）查詢社員身分與角色。
-- 角色分類：幹部（STAFF）、VIP 社員、一般社員、非社員（含過期判定）。
-- **Email 綁定**：使用者可透過 Email 將平台帳號與社員身分關聯，綁定結果同步回 API。
-- **訂閱管理**：社員可選擇在 Discord 接收每日課程通知。
-- **個性備註**：記錄使用者溝通風格與偏好（最多 100 字），供 Agent 調整回應方式。
-- 背景定時同步（每日 UTC+8 午夜），確保資料與 Google Sheets 一致。
+- `ntuai.dev` 的 Users 與 Memberships 是社員資料唯一來源；不匯入、不讀取本地舊資料。
+- 支援依 Discord、Facebook、LINE account ID 或已驗證 Email 查詢與綁定。
+- tier 0 為非社員／過期；tier 1、2、3 分別為講座探索、動手實作、專案實作。
+- `subscribe` 是 `discord`、`fb`、`line` 組成的逗號分隔字串，`null` 代表取消全部。
+- `personal_prompt` 是最多 100 字的使用者備註，供 Agent 注入 `User note`。
+- MCP response 進入 runtime 前會經 Pydantic schema、時區與單一有效會籍檢查。
 
 ### Prompt Injection 偵測 (`ian.domain.injection`)
 
@@ -151,7 +148,7 @@ ntuai-watson-agent/
 | `/faq` | 顯示常見問題按鈕（社課時間、社費、AI 基礎、專案組） |
 | `/clear` | 清除對話記憶 |
 
-- 自動提取 Discord 成員角色（排除 @everyone），並整合 member_db 角色資訊。
+- 依 ntuai.dev MCP 的有效 Membership tier 判定社員角色。
 - 支援 `[NO_RESPONSE]` 靜默回應或 emoji-only 回應。
 
 ### FB / LINE Webhook (`ian.gateways.webhook_server`)
@@ -170,7 +167,7 @@ Flask Web Server，接收各平台 webhook 並在背景執行緒處理訊息。`
 - 訊息去重快取（600 秒過期）防止重複處理。
 - Facebook 支援 typing indicator 與 emoji reaction。
 - LINE 支援 loading animation（20 秒延遲）、訊息分段（2000 字上限，最多 5 段）、過期 reply_token 的 push message fallback。
-- 使用者角色：優先查詢 member_db，fallback 至 CSV 對照表。
+- 使用者角色只依 ntuai.dev MCP 的有效 Membership 判定。
 
 ## 技術棧
 
@@ -185,6 +182,6 @@ Flask Web Server，接收各平台 webhook 並在背景執行緒處理訊息。`
 | Web Framework | Flask (async) |
 | Bot SDK | discord.py、LINE Bot SDK |
 | Transport | MCP streamable-http via Starlette + Uvicorn |
-| 社員資料 | Google Apps Script API + 本地 JSON 快取 |
+| 社員資料 | ntuai.dev MCP（Users + Memberships） |
 | 課程資料 | Google Sheets CSV（自動定時更新） |
 | Infrastructure | Docker (NVIDIA CUDA 12.1)、Docker Compose、ngrok |
