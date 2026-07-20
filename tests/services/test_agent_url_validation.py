@@ -58,7 +58,6 @@ def test_agent_runtime_replaces_hallucinated_urls_without_prompt_wrappers():
 def test_chat_with_agent_logs_blocked_request_without_private_content(
     monkeypatch, capsys
 ):
-    monkeypatch.setattr(runtime, "lookup_member_by_platform", lambda *_args: None)
     monkeypatch.setattr(runtime, "detect_prompt_injection", lambda _question: True)
     monkeypatch.setattr(runtime, "add_log", lambda *_args, **_kwargs: None)
 
@@ -79,7 +78,12 @@ def test_chat_with_agent_logs_blocked_request_without_private_content(
     entry = json.loads(capsys.readouterr().err)
     assert entry["event"] == "request_rejected"
     assert entry["reason"] == "prompt_injection"
-    for sensitive in ("session-1", "account-1", "Private Name", "private malicious prompt"):
+    for sensitive in (
+        "session-1",
+        "account-1",
+        "Private Name",
+        "private malicious prompt",
+    ):
         assert sensitive not in json.dumps(entry)
 
 
@@ -98,7 +102,6 @@ def test_chat_with_agent_logs_usage_and_queue_outcomes(
     async def resolve_future(_future):
         return "agent result"
 
-    monkeypatch.setattr(runtime, "lookup_member_by_platform", lambda *_args: None)
     monkeypatch.setattr(runtime, "detect_prompt_injection", lambda _question: False)
     monkeypatch.setattr(
         runtime, "check_and_update_usage", lambda _session_id: usage_allowed

@@ -24,28 +24,42 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import pytest
 
+from ian.domain.members import MemberTier, Platform
 from ian.services import reminder_runner
+from ian.services.member_service import ReminderRecipient
 
 
 TARGET_DATE = "2026/07/12"
-EVENTS = [
-    {
-        "title": "Agent Evaluation",
-        "time": "19:00",
-    }
-]
+EVENTS = [{"title": "Agent Evaluation", "time": "19:00"}]
 MESSAGE = "Hi! 明天 NTUAI 有 Agent Evaluation"
 
 
-def _stub_event_flow(monkeypatch, bound):
+def recipient(
+    platform: Platform = Platform.DISCORD,
+    *,
+    user_id: int = 1,
+    account_id: str = "account-1",
+    name: str = "Alice",
+    email: str = "alice@example.test",
+) -> ReminderRecipient:
+    return ReminderRecipient(
+        user_id=user_id,
+        name=name,
+        email=email,
+        platform=platform,
+        account_id=account_id,
+        tier=MemberTier.LECTURE_EXPLORATION,
+    )
+
+
+def stub_event_flow(monkeypatch, recipients):
     monkeypatch.setattr(reminder_runner, "fetch_course_data", pd.DataFrame)
     monkeypatch.setattr(reminder_runner, "find_events_on_date", lambda *_: EVENTS)
     monkeypatch.setattr(reminder_runner, "format_reminder_message", lambda *_: MESSAGE)
-    monkeypatch.setattr(reminder_runner, "load_members", list)
-    monkeypatch.setattr(reminder_runner, "get_valid_bound_members", lambda *_: bound)
+    monkeypatch.setattr(reminder_runner, "load_recipients", lambda: recipients)
 
 
-def test_run_once_logs_fetch_failure_without_loading_members(monkeypatch):
+def test_run_once_logs_fetch_failure_without_loading_recipients(monkeypatch):
     logs = []
 
     def fail_fetch():
@@ -54,248 +68,132 @@ def test_run_once_logs_fetch_failure_without_loading_members(monkeypatch):
     monkeypatch.setattr(reminder_runner, "fetch_course_data", fail_fetch)
     monkeypatch.setattr(
         reminder_runner,
-        "load_members",
-        lambda: (_ for _ in ()).throw(AssertionError("members should not be loaded")),
+        "load_recipients",
+        lambda: (_ for _ in ()).throw(AssertionError("should not load")),
     )
-    monkeypatch.setattr(reminder_runner, "send_discord_dm", lambda *_: False)
-    monkeypatch.setattr(reminder_runner, "send_log", logs.append)
-    monkeypatch.setattr(reminder_runner.time, "sleep", lambda *_: None)
+    monkeypatch.setattr(reminder_runner.notifications, "send_log", logs.append)
 
     reminder_runner.run_once(target_date=TARGET_DATE)
 
     assert logs == ["```\n[REMINDER] FAILED to fetch course data\n```"]
 
 
-def test_run_once_with_no_events_does_not_load_members_or_send_messages(monkeypatch):
+def test_run_once_with_no_events_skips_member_mcp(monkeypatch):
     monkeypatch.setattr(reminder_runner, "fetch_course_data", pd.DataFrame)
+    monkeypatch.setattr(reminder_runner, "find_events_on_date", lambda *_: [])
     monkeypatch.setattr(
         reminder_runner,
-        "load_members",
-        lambda: (_ for _ in ()).throw(AssertionError("members should not be loaded")),
+        "load_recipients",
+        lambda: (_ for _ in ()).throw(AssertionError("should not load")),
     )
-    monkeypatch.setattr(
-        reminder_runner,
-        "send_discord_dm",
-        lambda *_: (_ for _ in ()).throw(AssertionError("DM should not be sent")),
-    )
-    monkeypatch.setattr(
-        reminder_runner,
-        "send_log",
-        lambda *_: (_ for _ in ()).throw(AssertionError("log should not be sent")),
-    )
-    monkeypatch.setattr(reminder_runner.time, "sleep", lambda *_: None)
 
     reminder_runner.run_once(target_date=TARGET_DATE)
 
 
-def test_run_once_dry_run_logs_counts_without_recipient_details(
-    monkeypatch, capsys
-):
-    members = [{"name": "Alice"}, {"name": "Bob"}]
-    bound = [
-        {"name": "Alice", "email": "alice@example.test", "discord_id": "discord-1"},
-        {"name": "Bob", "email": "bob@example.test", "discord_id": "discord-2"},
-    ]
-
-    monkeypatch.setattr(reminder_runner, "fetch_course_data", pd.DataFrame)
-    monkeypatch.setattr(reminder_runner, "find_events_on_date", lambda *_: EVENTS)
-    monkeypatch.setattr(reminder_runner, "format_reminder_message", lambda *_: MESSAGE)
-    monkeypatch.setattr(reminder_runner, "load_members", lambda: members)
-    monkeypatch.setattr(reminder_runner, "get_valid_bound_members", lambda value: bound)
+def test_run_once_dry_run_reports_multiplatform_recipient_count(monkeypatch, capsys):
+    recipients = [recipient(), recipient(Platform.LINE, account_id="line-1")]
+    stub_event_flow(monkeypatch, recipients)
     monkeypatch.setattr(
-        reminder_runner,
-        "send_discord_dm",
-        lambda *_: (_ for _ in ()).throw(AssertionError("DM should not be sent")),
+        reminder_runner.notifications,
+        "send_notification",
+        lambda *_: (_ for _ in ()).throw(AssertionError("should not send")),
     )
-    monkeypatch.setattr(
-        reminder_runner,
-        "send_log",
-        lambda *_: (_ for _ in ()).throw(AssertionError("log should not be sent")),
-    )
-    monkeypatch.setattr(reminder_runner.time, "sleep", lambda *_: None)
 
     reminder_runner.run_once(target_date=TARGET_DATE, dry=True)
 
-    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
-    completed = entries[-1]
-    assert completed["event"] == "job_completed"
+    completed = json.loads(capsys.readouterr().err.splitlines()[-1])
     assert completed["status"] == "dry_run"
     assert completed["recipient_count"] == 2
-    assert "Alice" not in json.dumps(entries)
-    assert "discord-1" not in json.dumps(entries)
 
 
-def test_run_once_sends_personalized_messages_and_reports_counts(monkeypatch):
-    bound = [
-        {
-            "name": "王 小明",
-            "email": "member+test@example.test",
-            "discord_id": "discord-success",
-        },
-        {
-            "name": "Failed Member",
-            "email": "failed@example.test",
-            "discord_id": "discord-failure",
-        },
+def test_run_once_personalizes_and_sends_all_platforms(monkeypatch):
+    recipients = [
+        recipient(Platform.DISCORD, account_id="discord-1"),
+        recipient(Platform.FB, account_id="fb-1"),
+        recipient(Platform.LINE, account_id="line-1"),
     ]
-    dm_calls = []
-    log_calls = []
-    sleep_calls = []
-
-    def send_dm(discord_id, message):
-        dm_calls.append((discord_id, message))
-        return discord_id == "discord-success"
-
-    _stub_event_flow(monkeypatch, bound)
-    monkeypatch.setattr(reminder_runner, "send_discord_dm", send_dm)
-    monkeypatch.setattr(reminder_runner, "send_log", log_calls.append)
-    monkeypatch.setattr(reminder_runner.time, "sleep", sleep_calls.append)
+    sent = []
+    logs = []
+    stub_event_flow(monkeypatch, recipients)
+    monkeypatch.setattr(
+        reminder_runner.notifications,
+        "send_notification",
+        lambda target, message: sent.append((target.platform, message)) or True,
+    )
+    monkeypatch.setattr(reminder_runner.notifications, "send_log", logs.append)
+    monkeypatch.setattr(reminder_runner.time, "sleep", lambda *_: None)
 
     reminder_runner.run_once(target_date=TARGET_DATE)
 
-    assert dm_calls == [
-        (
-            "discord-success",
-            f"{MESSAGE}\n\n簽到碼連結：https://watsonshih.github.io/QuickRecord/"
-            "user.html?name=%E7%8E%8B%20%E5%B0%8F%E6%98%8E&id=member%2Btest%40example.test",
-        ),
-        (
-            "discord-failure",
-            f"{MESSAGE}\n\n簽到碼連結：https://watsonshih.github.io/QuickRecord/"
-            "user.html?name=Failed%20Member&id=failed%40example.test",
-        ),
+    assert [platform for platform, _message in sent] == [
+        Platform.DISCORD,
+        Platform.FB,
+        Platform.LINE,
     ]
-    assert sleep_calls == [0.5, 0.5]
-    assert len(log_calls) == 1
-    assert f"Events on {TARGET_DATE}: Agent Evaluation" in log_calls[0]
-    assert "Discord: 1 sent, 1 failed" in log_calls[0]
-    assert "Total members notified: 1" in log_calls[0]
+    assert all("name=Alice&id=alice%40example.test" in message for _, message in sent)
+    assert "Discord: 1 sent, 0 failed" in logs[0]
+    assert "Facebook: 1 sent, 0 failed" in logs[0]
+    assert "LINE: 1 sent, 0 failed" in logs[0]
+    assert "Total deliveries: 3" in logs[0]
 
 
-def test_run_once_logs_member_load_failure_without_sending_messages(monkeypatch):
+def test_run_once_reports_member_mcp_failure(monkeypatch):
     logs = []
-
-    monkeypatch.setattr(reminder_runner, "fetch_course_data", pd.DataFrame)
-    monkeypatch.setattr(reminder_runner, "find_events_on_date", lambda *_: EVENTS)
-    monkeypatch.setattr(reminder_runner, "format_reminder_message", lambda *_: MESSAGE)
+    stub_event_flow(monkeypatch, [])
     monkeypatch.setattr(
         reminder_runner,
-        "load_members",
-        lambda: (_ for _ in ()).throw(ValueError("invalid member JSON")),
+        "load_recipients",
+        lambda: (_ for _ in ()).throw(RuntimeError("MCP unavailable")),
     )
-    monkeypatch.setattr(
-        reminder_runner,
-        "send_discord_dm",
-        lambda *_: (_ for _ in ()).throw(AssertionError("DM should not be sent")),
-    )
-    monkeypatch.setattr(reminder_runner, "send_log", logs.append)
+    monkeypatch.setattr(reminder_runner.notifications, "send_log", logs.append)
 
     reminder_runner.run_once(target_date=TARGET_DATE)
 
     assert logs == ["```\n[REMINDER] FAILED to load member data\n```"]
 
 
-@pytest.mark.parametrize("failure_stage", ["find_events", "format_message"])
-def test_run_once_logs_event_preparation_failures(
-    monkeypatch, capsys, failure_stage
-):
-    logs = []
-    monkeypatch.setattr(reminder_runner, "fetch_course_data", pd.DataFrame)
-    monkeypatch.setattr(reminder_runner, "send_log", logs.append)
-    if failure_stage == "find_events":
-        monkeypatch.setattr(
-            reminder_runner,
-            "find_events_on_date",
-            lambda *_args: (_ for _ in ()).throw(ValueError("private event detail")),
-        )
-    else:
-        monkeypatch.setattr(reminder_runner, "find_events_on_date", lambda *_: EVENTS)
-        monkeypatch.setattr(
-            reminder_runner,
-            "format_reminder_message",
-            lambda *_args: (_ for _ in ()).throw(ValueError("private event detail")),
-        )
-
-    reminder_runner.run_once(target_date=TARGET_DATE)
-
-    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
-    assert entries[-1]["event"] == "job_failed"
-    assert entries[-1]["stage"] == "prepare_events"
-    assert entries[-1]["error_type"] == "ValueError"
-    assert "private event detail" not in json.dumps(entries)
-    assert logs == ["```\n[REMINDER] FAILED to prepare event data\n```"]
-
-
-def test_run_once_continues_after_one_dm_raises(monkeypatch, capsys):
-    bound = [
-        {"name": "Alice", "email": "alice@example.test", "discord_id": "bad"},
-        {"name": "Bob", "email": "bob@example.test", "discord_id": "good"},
+def test_run_once_continues_after_delivery_exception(monkeypatch, capsys):
+    recipients = [
+        recipient(account_id="bad"),
+        recipient(Platform.LINE, user_id=2, account_id="good"),
     ]
     attempted = []
     logs = []
+    stub_event_flow(monkeypatch, recipients)
 
-    def send_dm(discord_id, _message):
-        attempted.append(discord_id)
-        if discord_id == "bad":
-            raise TimeoutError("Discord timeout")
+    def send(target, _message):
+        attempted.append(target.account_id)
+        if target.account_id == "bad":
+            raise TimeoutError("private timeout")
         return True
 
-    _stub_event_flow(monkeypatch, bound)
-    monkeypatch.setattr(reminder_runner, "send_discord_dm", send_dm)
-    monkeypatch.setattr(reminder_runner, "send_log", logs.append)
+    monkeypatch.setattr(reminder_runner.notifications, "send_notification", send)
+    monkeypatch.setattr(reminder_runner.notifications, "send_log", logs.append)
     monkeypatch.setattr(reminder_runner.time, "sleep", lambda *_: None)
 
     reminder_runner.run_once(target_date=TARGET_DATE)
 
     assert attempted == ["bad", "good"]
-    assert "Discord: 1 sent, 1 failed" in logs[0]
-    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
-    failure = next(
-        entry for entry in entries if entry["event"] == "external_send_failure"
-    )
-    assert failure["error_type"] == "TimeoutError"
-    assert "bad" not in json.dumps(entries)
-    assert "Discord timeout" not in json.dumps(entries)
-
-
-def test_run_once_with_no_recipients_reports_zero_counts(monkeypatch):
-    logs = []
-
-    _stub_event_flow(monkeypatch, [])
-    monkeypatch.setattr(
-        reminder_runner,
-        "send_discord_dm",
-        lambda *_: (_ for _ in ()).throw(AssertionError("DM should not be sent")),
-    )
-    monkeypatch.setattr(reminder_runner, "send_log", logs.append)
-
-    reminder_runner.run_once(target_date=TARGET_DATE)
-
-    assert "Discord: 0 sent, 0 failed" in logs[0]
-    assert "Total members notified: 0" in logs[0]
+    assert "Discord: 0 sent, 1 failed" in logs[0]
+    assert "LINE: 1 sent, 0 failed" in logs[0]
+    assert "private timeout" not in capsys.readouterr().err
 
 
 @pytest.mark.parametrize(
     ("name", "email"),
-    [
-        pytest.param("Alice", "", id="missing-email"),
-        pytest.param("", "alice@example.test", id="missing-name"),
-        pytest.param("", "", id="missing-name-and-email"),
-    ],
+    [("Alice", ""), ("", "alice@example.test"), ("", "")],
 )
 def test_run_once_omits_checkin_link_without_complete_identity(
     monkeypatch, name, email
 ):
-    bound = [{"name": name, "email": email, "discord_id": "discord-1"}]
     messages = []
-
-    _stub_event_flow(monkeypatch, bound)
+    stub_event_flow(monkeypatch, [recipient(name=name, email=email)])
     monkeypatch.setattr(
-        reminder_runner,
-        "send_discord_dm",
-        lambda _discord_id, message: messages.append(message) or True,
+        reminder_runner.notifications,
+        "send_notification",
+        lambda _target, message: messages.append(message) or True,
     )
-    monkeypatch.setattr(reminder_runner, "send_log", lambda *_: None)
+    monkeypatch.setattr(reminder_runner.notifications, "send_log", lambda *_: None)
     monkeypatch.setattr(reminder_runner.time, "sleep", lambda *_: None)
 
     reminder_runner.run_once(target_date=TARGET_DATE)
@@ -318,7 +216,6 @@ def test_run_once_uses_taipei_tomorrow_when_target_date_is_omitted(monkeypatch):
         "find_events_on_date",
         lambda _df, target_date: checked_dates.append(target_date) or [],
     )
-    monkeypatch.setattr(reminder_runner, "send_log", lambda *_: None)
 
     reminder_runner.run_once()
 

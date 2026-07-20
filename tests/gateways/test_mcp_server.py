@@ -20,6 +20,7 @@
 
 import asyncio
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -48,10 +49,15 @@ def test_check_user_permission_uses_allowed_channels_and_member_role(
     monkeypatch, channel_id, resolved_role, expected
 ):
     monkeypatch.setattr(mcp_server, "ALLOWED_CHANNELS", {"allowed"})
-    monkeypatch.setattr(mcp_server, "get_member_role", lambda *_: resolved_role)
+
+    async def get_member_role(*_args):
+        return resolved_role
+
+    monkeypatch.setattr(mcp_server.member_service, "get_member_role", get_member_role)
 
     assert (
-        mcp_server.check_user_permission("Discord", "account-1", channel_id) == expected
+        _run(mcp_server.check_user_permission("Discord", "account-1", channel_id))
+        == expected
     )
 
 
@@ -96,7 +102,10 @@ def test_check_user_permission_uses_allowed_channels_and_member_role(
 def test_generate_checkin_code_handles_member_and_guest_flows(
     monkeypatch, member, name, email, expected_parts
 ):
-    monkeypatch.setattr(mcp_server, "lookup_member_by_platform", lambda *_: member)
+    async def find_member(*_args):
+        return SimpleNamespace(**member) if member else None
+
+    monkeypatch.setattr(mcp_server.member_service, "find_user_by_platform", find_member)
 
     result = _run(mcp_server.generate_checkin_code("Discord", "account-1", name, email))
 
@@ -108,21 +117,21 @@ def test_generate_checkin_code_handles_member_and_guest_flows(
     [
         pytest.param(
             "bind_email",
-            "_bind_email_to_platform",
+            "bind_user_platform",
             ("member@example.test", "Discord", "account-1"),
             "⚠️ 綁定時發生錯誤",
             id="bind-email",
         ),
         pytest.param(
             "update_subscribe",
-            "_update_subscribe",
+            "update_user_subscription",
             ("Discord", "account-1", "discord"),
             "⚠️ 更新訂閱設定時發生錯誤",
             id="update-subscribe",
         ),
         pytest.param(
             "update_personal_prompt",
-            "_update_personal_prompt",
+            "update_personal_prompt",
             ("Discord", "account-1", "concise"),
             "⚠️ 更新個性備註時發生錯誤",
             id="update-personal-prompt",
@@ -141,15 +150,17 @@ def test_member_tool_wrappers_return_messages_and_handle_exceptions(
         ),
     )
     tool = getattr(mcp_server, tool_name)
-    monkeypatch.setattr(
-        mcp_server, dependency_name, lambda *_: {"message": "service message"}
-    )
+
+    async def success(*_args):
+        return SimpleNamespace(message="service message")
+
+    monkeypatch.setattr(mcp_server.member_service, dependency_name, success)
     assert _run(tool(*args)) == "service message"
 
-    def fail(*_args):
+    async def fail(*_args):
         raise RuntimeError("service unavailable")
 
-    monkeypatch.setattr(mcp_server, dependency_name, fail)
+    monkeypatch.setattr(mcp_server.member_service, dependency_name, fail)
     assert _run(tool(*args)) == f"{error_prefix}：service unavailable"
     assert events == [
         {
@@ -185,10 +196,24 @@ def _stub_staff(monkeypatch):
 
 def test_notify_members_sends_custom_notification(monkeypatch):
     _stub_staff(monkeypatch)
-    delivery = {"total_members": 2, "discord_ok": 1, "discord_fail": 1}
+    delivery = {
+        "total_members": 2,
+        "discord_ok": 1,
+        "discord_fail": 1,
+        "fb_ok": 0,
+        "fb_fail": 0,
+        "line_ok": 0,
+        "line_fail": 0,
+    }
     sent = []
     logs = []
-    monkeypatch.setattr("ian.services.reminder_runner.load_members", lambda: ["member"])
+
+    async def list_recipients():
+        return ["member"]
+
+    monkeypatch.setattr(
+        mcp_server.member_service, "list_reminder_recipients", list_recipients
+    )
     monkeypatch.setattr(
         mcp_server.notifications,
         "send_notification_to_members",
@@ -227,10 +252,22 @@ def test_notify_members_reports_missing_event_without_sending(monkeypatch):
 def test_notify_members_sends_formatted_event_notification(monkeypatch):
     _stub_staff(monkeypatch)
     event = {"title": "Agent Evaluation", "date": "2026/08/01"}
-    delivery = {"total_members": 3, "discord_ok": 3, "discord_fail": 0}
+    delivery = {
+        "total_members": 3,
+        "discord_ok": 3,
+        "discord_fail": 0,
+        "fb_ok": 0,
+        "fb_fail": 0,
+        "line_ok": 0,
+        "line_fail": 0,
+    }
     monkeypatch.setattr(mcp_server, "_find_event_by_date", lambda _date: event)
+
+    async def list_recipients():
+        return ["members"]
+
     monkeypatch.setattr(
-        "ian.services.reminder_runner.load_members", lambda: ["members"]
+        mcp_server.member_service, "list_reminder_recipients", list_recipients
     )
     monkeypatch.setattr(
         mcp_server.notifications,
@@ -288,11 +325,11 @@ def test_course_retriever_log_redacts_query_and_identifiers(monkeypatch, capsys)
         "load_course_data_from_url",
         lambda *_: None,
     )
-    monkeypatch.setattr(
-        mcp_server,
-        "check_user_permission",
-        lambda *_: (True, "社員"),
-    )
+
+    async def allow(*_args):
+        return True, "社員"
+
+    monkeypatch.setattr(mcp_server, "check_user_permission", allow)
     monkeypatch.setattr(
         mcp_server.course_catalog,
         "get_all_course_data",

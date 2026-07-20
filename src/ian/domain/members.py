@@ -18,67 +18,157 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
+from __future__ import annotations
+
 from datetime import datetime
+from enum import IntEnum, StrEnum
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ian.config import TZ_TPE
 
 
-TIER_ROLE_MAP = {
-    "STAFF": "幹部",
-    "VIP": "VIP 社員",
-}
-
-PLATFORM_FIELD_MAP = {
-    "Discord": "discord_acc_id",
-    "FB": "fb_acc_id",
-    "LINE": "line_acc_id",
-}
-
-VALID_SUBSCRIBE_PLATFORMS = {"discord"}
-SUBSCRIBE_PLATFORM_FIELD = {
-    "discord": "discord_acc_id",
-}
+_VALID_SUBSCRIBE_PLATFORMS = {"discord", "fb", "line"}
 PERSONAL_PROMPT_MAX_LEN = 100
 
 
-def is_valid_member(member: dict, now: datetime | None = None) -> bool:
-    valid_date_str = member.get("valid_date", "")
-    if not valid_date_str:
-        return False
-    try:
-        valid_date = datetime.fromisoformat(valid_date_str.replace("Z", "+00:00"))
+class MemberDataError(ValueError):
+    """Raised when MCP member data violates the domain contract."""
+
+
+class MembershipIntegrityError(MemberDataError):
+    """Raised when a user has ambiguous active memberships."""
+
+
+class Platform(StrEnum):
+    DISCORD = "discord"
+    FB = "fb"
+    LINE = "line"
+
+    @classmethod
+    def parse(cls, value: str | "Platform") -> "Platform":
+        if isinstance(value, cls):
+            return value
+        normalized = str(value).strip().lower()
+        aliases = {
+            "discord": cls.DISCORD,
+            "fb": cls.FB,
+            "facebook": cls.FB,
+            "line": cls.LINE,
+        }
+        try:
+            return aliases[normalized]
+        except KeyError as error:
+            raise MemberDataError(f"不支援的平台: {value}") from error
+
+    @property
+    def account_field(self) -> str:
+        return {
+            Platform.DISCORD: "discord_acc_id",
+            Platform.FB: "fb_acc_id",
+            Platform.LINE: "line_acc_id",
+        }[self]
+
+
+class MemberTier(IntEnum):
+    NON_MEMBER = 0
+    LECTURE_EXPLORATION = 1
+    HANDS_ON = 2
+    PROJECT = 3
+
+    @property
+    def label(self) -> str:
+        return {
+            MemberTier.NON_MEMBER: "非社員",
+            MemberTier.LECTURE_EXPLORATION: "講座探索",
+            MemberTier.HANDS_ON: "動手實作",
+            MemberTier.PROJECT: "專案實作",
+        }[self]
+
+
+def normalize_subscribe(value: str | None) -> str | None:
+    """Normalize a single MCP notification platform."""
+    if value is None:
+        return None
+    normalized = value.strip().lower()
+    if not normalized:
+        raise MemberDataError("subscribe 不可為空字串，取消訂閱請使用 null")
+    if "," in normalized:
+        raise MemberDataError("subscribe 僅能指定一個平台")
+    if normalized not in _VALID_SUBSCRIBE_PLATFORMS:
+        raise MemberDataError(f"不支援的訂閱平台: {normalized}")
+    return normalized
+
+
+class Membership(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+    user: int
+    tier: int = Field(ge=0, le=3)
+    start_at: datetime
+    end_at: datetime | None = None
+
+    @field_validator("start_at", "end_at")
+    @classmethod
+    def require_timezone(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            raise ValueError("membership datetime must include a timezone")
+        return value
+
+    def is_active(self, now: datetime | None = None) -> bool:
+        if self.tier == MemberTier.NON_MEMBER:
+            return False
         current = now or datetime.now(TZ_TPE)
-        return current <= valid_date
-    except (ValueError, TypeError):
-        return False
+        return self.start_at <= current and (
+            self.end_at is None or current <= self.end_at
+        )
 
 
-def get_role_from_tier(tier: str) -> str:
-    if not tier:
-        return "社員"
-    return TIER_ROLE_MAP.get(tier, tier)
+class User(BaseModel):
+    model_config = ConfigDict(extra="ignore")
 
+    id: int
+    name: str
+    email: str
+    emailVerified: bool
+    discord_acc_id: str | None = None
+    fb_acc_id: str | None = None
+    line_acc_id: str | None = None
+    subscribe: str | None = None
+    personal_prompt: str | None = None
+    memberships: list[Membership] = Field(default_factory=list)
 
-def platform_field(platform: str) -> str | None:
-    return PLATFORM_FIELD_MAP.get(platform)
+    @field_validator("subscribe")
+    @classmethod
+    def validate_subscribe(cls, value: str | None) -> str | None:
+        return normalize_subscribe(value)
+
+    def active_membership(self, now: datetime | None = None) -> Membership | None:
+        active = [
+            membership for membership in self.memberships if membership.is_active(now)
+        ]
+        if len(active) > 1:
+            raise MembershipIntegrityError(
+                f"user {self.id} has multiple active memberships"
+            )
+        return active[0] if active else None
+
+    def effective_tier(self, now: datetime | None = None) -> MemberTier:
+        membership = self.active_membership(now)
+        return MemberTier(membership.tier) if membership else MemberTier.NON_MEMBER
+
+    def member_role(self, now: datetime | None = None) -> str:
+        return self.effective_tier(now).label
+
+    def subscribed_platform(self) -> Platform | None:
+        if self.subscribe is None:
+            return None
+        return Platform(self.subscribe)
 
 
 def normalize_email(email: str) -> str:
-    email = email.strip()
-    if "@" not in email:
-        return email.lower()
-    local, domain = email.rsplit("@", 1)
-    return f"{local.lower()}@{domain}"
-
-
-def parse_subscribe_platforms(subscribe_str: str) -> list[str]:
-    raw_platforms = [p.strip().lower() for p in subscribe_str.split(",") if p.strip()]
-    return sorted(set(raw_platforms))
-
-
-def invalid_subscribe_platforms(subscribe_str: str) -> list[str]:
-    raw_platforms = [p.strip().lower() for p in subscribe_str.split(",") if p.strip()]
-    return [p for p in raw_platforms if p not in VALID_SUBSCRIBE_PLATFORMS]
+    return email.strip().lower()
 
 
 def normalize_personal_prompt(prompt_text: str) -> str:

@@ -22,22 +22,16 @@ import asyncio
 import threading
 import time
 
-import pandas as pd
 import requests
 
-from ian.config import MEMBER_MAPPING_FILE, PAGE_ACCESS_TOKEN
+from ian.config import PAGE_ACCESS_TOKEN
 from ian.gateways.agent_bridge import run_agent_message_flow
 from ian.gateways.messaging_common import (
     get_current_time,
     save_chat_history,
 )
-from ian.services.member_store import (
-    get_member_name as get_member_name_from_db,
-    get_member_role as get_member_role_from_db,
-)
+from ian.services.member_service import member_service
 from ian.utils.logging import elapsed_ms, hash_identifier, log_event
-
-MAPPING_FILE_PATH = MEMBER_MAPPING_FILE
 
 PROCESSED_MESSAGES = {}
 PROCESSED_MESSAGES_LOCK = threading.Lock()
@@ -56,32 +50,10 @@ def cleanup_processed_messages():
             del PROCESSED_MESSAGES[mid]
 
 
-def get_member_mapping(username: str, csv_path: str):
-    try:
-        df = pd.read_csv(csv_path)
-        features = df.columns.to_list()
-        account_col = "FB帳號"
-
-        if account_col not in features or "角色" not in features:
-            raise ValueError(f"CSV 檔案必須包含 '{account_col}' 和 '角色' 欄位")
-
-        mapping = dict(zip(df[account_col], df["角色"]))
-        return mapping.get(username.strip(), "非社員（尚未加入 AI 社）")
-    except Exception as e:
-        log_event(
-            "operation_failed",
-            "facebook_webhook",
-            level="error",
-            platform="Facebook",
-            status="error",
-            operation="load_member_mapping",
-            error=e,
-        )
-        return "非社員"
-
-
 async def send_typing_indicator(recipient_id, action="typing_on", correlation_id=None):
-    url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+    url = (
+        f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+    )
     data = {"recipient": {"id": recipient_id}, "sender_action": action}
     headers = {"Content-Type": "application/json"}
     try:
@@ -114,7 +86,10 @@ async def send_typing_indicator(recipient_id, action="typing_on", correlation_id
 
 def get_fb_user_profile(sender_id):
     url = f"https://graph.facebook.com/v18.0/{sender_id}"
-    params = {"fields": "first_name,last_name,profile_pic", "access_token": PAGE_ACCESS_TOKEN}
+    params = {
+        "fields": "first_name,last_name,profile_pic",
+        "access_token": PAGE_ACCESS_TOKEN,
+    }
     try:
         response = requests.get(url, params=params, timeout=5)
         if response.status_code == 200:
@@ -148,7 +123,9 @@ def get_fb_user_profile(sender_id):
 
 
 def send_message(recipient_id, text, correlation_id=None):
-    url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+    url = (
+        f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+    )
     payload = {"recipient": {"id": recipient_id}, "message": {"text": text}}
     headers = {"Content-Type": "application/json"}
     try:
@@ -190,7 +167,9 @@ def send_message(recipient_id, text, correlation_id=None):
 
 def send_reaction(recipient_id, mid, emoji, correlation_id=None):
     """Send a reaction emoji to a specific message via FB Graph API."""
-    url = f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+    url = (
+        f"https://graph.facebook.com/v18.0/me/messages?access_token={PAGE_ACCESS_TOKEN}"
+    )
     payload = {
         "recipient": {"id": recipient_id},
         "sender_action": "react",
@@ -246,13 +225,14 @@ async def process_message_task(sender_id, user_message, mid=None):
     started_at = time.monotonic()
     try:
         await send_typing_indicator(sender_id, "typing_on", correlation_id)
-        user_name = get_fb_user_profile(sender_id) or get_member_name_from_db("FB", sender_id) or "FB訪客"
-        roles = get_member_role_from_db("FB", sender_id)
+        member = await member_service.find_user_by_platform("FB", sender_id)
+        user_name = (
+            get_fb_user_profile(sender_id)
+            or (member.name if member else None)
+            or "FB訪客"
+        )
+        roles = member.member_role() if member else "非社員"
         account_id = sender_id
-        if roles == "非社員":
-            csv_role = get_member_mapping(user_name, MAPPING_FILE_PATH)
-            if csv_role != "非社員（尚未加入 AI 社）":
-                roles = csv_role
 
         current_time = get_current_time()
         log_event(
@@ -273,6 +253,7 @@ async def process_message_task(sender_id, user_message, mid=None):
             channel_id="NaN",
             platform="FB",
             account_id=account_id,
+            member=member,
         )
 
         await send_typing_indicator(sender_id, "typing_off", correlation_id)
@@ -289,7 +270,9 @@ async def process_message_task(sender_id, user_message, mid=None):
                 reason="agent_decision",
             )
             if agent_result.reaction_emoji and mid:
-                send_reaction(sender_id, mid, agent_result.reaction_emoji, correlation_id)
+                send_reaction(
+                    sender_id, mid, agent_result.reaction_emoji, correlation_id
+                )
             return
 
         send_message(sender_id, agent_result.text, correlation_id)
@@ -321,7 +304,11 @@ def handle_facebook_messages(data):
         for messaging_event in entry.get("messaging", []):
             message_obj = messaging_event.get("message")
 
-            if message_obj and message_obj.get("text") and not message_obj.get("is_echo"):
+            if (
+                message_obj
+                and message_obj.get("text")
+                and not message_obj.get("is_echo")
+            ):
                 mid = message_obj.get("mid")
                 if not mid:
                     continue

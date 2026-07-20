@@ -21,6 +21,7 @@
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable
 
+from ian.domain.members import User
 from ian.gateways.messaging_common import get_current_time
 from ian.services.agent import chat_with_agent, parse_no_response, start_dispatcher
 
@@ -41,6 +42,7 @@ async def run_agent_message_flow(
     channel_id: str,
     platform: str,
     account_id: str,
+    member: User | None = None,
     current_time: dict[str, Any] | None = None,
     start_dispatcher_fn: Callable[[str, dict[str, Any]], Any] = start_dispatcher,
     chat_with_agent_fn: Callable[..., Awaitable[str]] = chat_with_agent,
@@ -58,6 +60,7 @@ async def run_agent_message_flow(
         channel_id,
         platform=platform,
         account_id=account_id,
+        member=member,
     )
     is_no_response, reaction_emoji = parse_no_response(response)
     return AgentMessageResult(

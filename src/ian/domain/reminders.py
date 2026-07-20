@@ -24,33 +24,10 @@ import pandas as pd
 
 from ian.config import TZ_TPE
 from ian.domain.courses import clean_value
-from ian.domain.members import is_valid_member, parse_subscribe_platforms
 
 
 REMINDER_HOUR = 19
 REMINDER_MINUTE = 0
-
-
-def get_valid_bound_members(members: list[dict], now: datetime | None = None) -> list[dict]:
-    result = []
-    for member in members:
-        if not is_valid_member(member, now=now):
-            continue
-
-        subscribed_platforms = parse_subscribe_platforms(str(member.get("subscribe", "")))
-        discord_id = str(member.get("discord_acc_id", "")).strip()
-        has_discord = bool(discord_id and discord_id != "0") and "discord" in subscribed_platforms
-
-        if has_discord:
-            result.append(
-                {
-                    "name": member.get("name", ""),
-                    "email": member.get("email", ""),
-                    "tier": member.get("Tier", ""),
-                    "discord_id": discord_id,
-                }
-            )
-    return result
 
 
 def find_events_on_date(df: pd.DataFrame, target_date: str) -> list[dict]:

@@ -33,7 +33,7 @@ from ian.services.agent import (
     send_startup_notification,
     clear_session,
 )
-from ian.services.member_store import get_member_role as get_member_role_from_db, init as init_member_db
+from ian.services.member_service import member_service
 from ian.utils.logging import elapsed_ms, hash_identifier, log_event
 
 UPLOAD_DIR = "uploads"
@@ -85,7 +85,8 @@ class FAQView(discord.ui.View):
 
         user = interaction.user
 
-        db_role = get_member_role_from_db("Discord", str(user.id))
+        member = await member_service.find_user_by_platform("Discord", str(user.id))
+        db_role = member.member_role() if member else "非社員"
         roles = [db_role]
 
         current_time = get_current_time()
@@ -120,6 +121,7 @@ class FAQView(discord.ui.View):
                 channel_id=str(interaction.channel_id),
                 platform="Discord",
                 account_id=str(user.id),
+                member=member,
             )
             if not agent_result.should_reply:
                 log_event(
@@ -163,13 +165,17 @@ class FAQView(discord.ui.View):
     @discord.ui.button(
         label="社課時間？", style=discord.ButtonStyle.secondary, custom_id="faq_time"
     )
-    async def time_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def time_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
         await self.ask_llm(interaction, "請問 NTUAI 的社課時間是什麼時候？")
 
     @discord.ui.button(
         label="社費多少？", style=discord.ButtonStyle.secondary, custom_id="faq_fee"
     )
-    async def fee_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def fee_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
         await self.ask_llm(interaction, "加入 NTUAI 社團需要多少社費？")
 
     @discord.ui.button(
@@ -177,7 +183,9 @@ class FAQView(discord.ui.View):
         style=discord.ButtonStyle.secondary,
         custom_id="faq_ai",
     )
-    async def ai_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def ai_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
         await self.ask_llm(interaction, "參加 NTUAI 的課程需要有 AI 基礎嗎？")
 
     @discord.ui.button(
@@ -185,33 +193,16 @@ class FAQView(discord.ui.View):
         style=discord.ButtonStyle.secondary,
         custom_id="faq_project",
     )
-    async def project_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+    async def project_button(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
         await self.ask_llm(interaction, "想加入 NTUAI 的專案組需要什麼條件？")
 
-# Initialize member database
-try:
-    init_member_db()
-    log_event(
-        "job_completed",
-        "discord_bot",
-        platform="Discord",
-        status="success",
-        job="member_store_initialization",
-    )
-except Exception as e:
-    log_event(
-        "job_failed",
-        "discord_bot",
-        level="error",
-        platform="Discord",
-        status="error",
-        job="member_store_initialization",
-        error=e,
-    )
 
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
+
 
 @bot.event
 async def on_ready():
@@ -226,6 +217,7 @@ async def on_ready():
         service="discord_bot",
     )
 
+
 @bot.tree.command(name="ask", description="Ask Avatar.")
 @app_commands.describe(prompt="歡迎詢問 NTUAI! Ask anything about NTUAI!")
 async def ask(interaction: discord.Interaction, prompt: str):
@@ -233,7 +225,8 @@ async def ask(interaction: discord.Interaction, prompt: str):
     correlation_id = _interaction_correlation_id(interaction)
     user = interaction.user
 
-    db_role = get_member_role_from_db("Discord", str(user.id))
+    member = await member_service.find_user_by_platform("Discord", str(user.id))
+    db_role = member.member_role() if member else "非社員"
     roles = [db_role]
 
     current_time = get_current_time()
@@ -270,6 +263,7 @@ async def ask(interaction: discord.Interaction, prompt: str):
             channel_id=str(interaction.channel_id),
             platform="Discord",
             account_id=str(user.id),
+            member=member,
         )
         if not agent_result.should_reply:
             log_event(
@@ -311,18 +305,22 @@ async def ask(interaction: discord.Interaction, prompt: str):
             error=e,
         )
 
+
 @bot.tree.command(name="faq", description="常見問題")
 async def faq(interaction: discord.Interaction):
     await interaction.response.send_message(
         "點選下方按鈕查看常見問題：", view=FAQView()
     )
 
+
 @bot.tree.command(name="clear", description="清除記憶")
 async def clear(interaction: discord.Interaction):
     correlation_id = _interaction_correlation_id(interaction)
     try:
         await clear_session(interaction.user.name)
-        await interaction.response.send_message("🫥 已清除記憶，請開始新的對話。\nCleared. Please start a new conversation.")
+        await interaction.response.send_message(
+            "🫥 已清除記憶，請開始新的對話。\nCleared. Please start a new conversation."
+        )
     except Exception as e:
         await interaction.response.send_message("⚠️ Error.")
         log_event(
@@ -336,6 +334,7 @@ async def clear(interaction: discord.Interaction):
             operation="clear_session",
             error=e,
         )
+
 
 def entrypoint():
     if not DISCORD_BOT_TOKEN:

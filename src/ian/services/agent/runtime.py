@@ -32,6 +32,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from ian.config import GOOGLE_API_KEY
 from ian.domain.injection import INJECTION_REJECTION_MSG, detect_prompt_injection
+from ian.domain.members import User
 from ian.domain.urls import URL_PLACEHOLDER, validate_urls_in_response
 from ian.services.agent.callbacks import (
     DiscordLogCallbackHandler,
@@ -48,7 +49,6 @@ from ian.services.agent.sessions import (
     upsert_session,
 )
 from ian.services.agent.usage import check_and_update_usage
-from ian.services.member_store import lookup_member_by_platform
 from ian.utils.logging import (
     elapsed_ms,
     hash_identifier,
@@ -75,7 +75,9 @@ dispatcher_lock = threading.Lock()
 """
 MCP tools with single agent executor
 """
-request_queue: Queue[tuple[str, str, str, str, float, str, str, str, Future]] = Queue()
+request_queue: Queue[
+    tuple[str, str, str, str, float, str, str, str, User | None, Future]
+] = Queue()
 
 
 MCP_SERVER_URL = "http://localhost:5191/mcp"
@@ -113,9 +115,18 @@ async def run_agentic_workflow():
     tools = await client.get_tools()
     try:
         while True:
-            session_id, user_name, question, user_role, timestamp, channel_id, platform, account_id, fut = (
-                await asyncio.to_thread(request_queue.get)
-            )
+            (
+                session_id,
+                user_name,
+                question,
+                user_role,
+                timestamp,
+                channel_id,
+                platform,
+                account_id,
+                member,
+                fut,
+            ) = await asyncio.to_thread(request_queue.get)
             if session_id is None:
                 break
             invocation_started_at = time.monotonic()
@@ -189,15 +200,10 @@ async def run_agentic_workflow():
                     f"[Name:{user_name} Role:{user_role}] Message: {question}"
                 )
 
-                # 查找社員資料，注入 personal_prompt / note / subscribe
-                member_info = lookup_member_by_platform(platform, account_id)
-                personal_prompt = str(member_info.get("personal_prompt", "")).strip() if member_info else ""
-                member_note = str(member_info.get("note", "")).strip() if member_info else ""
-                subscribe_info = str(member_info.get("subscribe", "")).strip() if member_info else ""
+                member_note = (member.personal_prompt or "").strip() if member else ""
+                subscribe_info = (member.subscribe or "").strip() if member else ""
 
                 sys_content = f"Current time in Taiwan：{nowdatetime}, {nowday}。User name：{user_name}, User role：{user_role}, Channel ID: {channel_id}, Platform: {platform}, Account ID: {account_id}"
-                if personal_prompt:
-                    sys_content += f"\nUser personality：{personal_prompt}"
                 if member_note:
                     sys_content += f"\nUser note：{member_note}"
                 if subscribe_info:
@@ -216,7 +222,11 @@ async def run_agentic_workflow():
                 for invoke_attempt in range(MAX_INVOKE_RETRIES):
                     if invoke_attempt > 0:
                         # 重建 agent 並重新取得 MCP 工具，以清除損壞的連線/對話歷史
-                        root_cause = _unwrap_exception(last_invoke_error) if last_invoke_error else last_invoke_error
+                        root_cause = (
+                            _unwrap_exception(last_invoke_error)
+                            if last_invoke_error
+                            else last_invoke_error
+                        )
                         add_log(
                             "RETRY",
                             user_name=hash_identifier(user_name),
@@ -268,7 +278,9 @@ async def run_agentic_workflow():
                             if attempt > 0:
                                 prev_results = log_callback.tool_results
                                 log_callback = DiscordLogCallbackHandler()
-                                log_callback.tool_results = prev_results  # 保留上次 tool 回傳的 URL
+                                log_callback.tool_results = (
+                                    prev_results  # 保留上次 tool 回傳的 URL
+                                )
                                 add_log(
                                     "RETRY",
                                     user_name=hash_identifier(user_name),
@@ -301,22 +313,29 @@ async def run_agentic_workflow():
                                         },
                                     ]
                                 },
-                                config={"configurable": {"thread_id": session_id}, "callbacks": [log_callback]},
+                                config={
+                                    "configurable": {"thread_id": session_id},
+                                    "callbacks": [log_callback],
+                                },
                             )
                             messages = agent_msg.get("messages", "⚠️ 回覆解析失敗")
-                            raw_content = messages[-1].content  # last response from agent
+                            raw_content = messages[
+                                -1
+                            ].content  # last response from agent
 
                             # 處理複雜的回應結構 (Gemini 可能返回 list of dict)
                             if isinstance(raw_content, list):
                                 text_parts = []
                                 for item in raw_content:
-                                    if isinstance(item, dict) and 'text' in item:
-                                        text_parts.append(item['text'])
+                                    if isinstance(item, dict) and "text" in item:
+                                        text_parts.append(item["text"])
                                     elif isinstance(item, str):
                                         text_parts.append(item)
-                                parsed_agent_response = ''.join(text_parts)
-                            elif isinstance(raw_content, dict) and 'text' in raw_content:
-                                parsed_agent_response = raw_content['text']
+                                parsed_agent_response = "".join(text_parts)
+                            elif (
+                                isinstance(raw_content, dict) and "text" in raw_content
+                            ):
+                                parsed_agent_response = raw_content["text"]
                             else:
                                 parsed_agent_response = str(raw_content)
 
@@ -325,7 +344,7 @@ async def run_agentic_workflow():
                             # 因此也要從 session history 中的 ToolMessage 提取合法 URL
                             all_tool_texts = list(log_callback.tool_results)
                             for msg in messages:
-                                if hasattr(msg, 'type') and msg.type == 'tool':
+                                if hasattr(msg, "type") and msg.type == "tool":
                                     all_tool_texts.append(extract_text_from_output(msg))
                             parsed_agent_response = _validate_agent_response_urls(
                                 parsed_agent_response, all_tool_texts
@@ -410,9 +429,11 @@ async def run_agentic_workflow():
                 # 導致後續請求因 INVALID_CHAT_HISTORY 持續失敗
                 with sessions_lock:
                     reset_session_agent(session_id, user_name)
-                fut.set_result("⚠️ 發生錯誤，請稍後再試。\nError occurred, please try again later.")
+                fut.set_result(
+                    "⚠️ 發生錯誤，請稍後再試。\nError occurred, please try again later."
+                )
     finally:
-        if hasattr(client, 'aclose'):
+        if hasattr(client, "aclose"):
             await client.aclose()
 
 
@@ -452,19 +473,25 @@ def start_dispatcher(user_name: str, current_time):
 
 
 async def chat_with_agent(
-    session_id: str, user_name: str, question: str, user_role: str,
-    timestamp: float, channel_id: str, platform: str = "Discord",
+    session_id: str,
+    user_name: str,
+    question: str,
+    user_role: str,
+    timestamp: float,
+    channel_id: str,
+    platform: str = "Discord",
     account_id: str = "",
+    member: User | None = None,
 ):
     """公開非同步介面：檢查安全性與用量後，將請求放入佇列。"""
-    # 若使用者是社員，用 member_db 中的本名取代平台暱稱
-    member = lookup_member_by_platform(platform, account_id)
-    if member and member.get("id"):
-        user_name = member["id"]
+    if member:
+        user_name = member.name
 
     # Prompt injection guardrail — check before anything else
     if detect_prompt_injection(question):
-        add_log("ERROR", error="Prompt injection blocked", context=f"{platform} request")
+        add_log(
+            "ERROR", error="Prompt injection blocked", context=f"{platform} request"
+        )
         log_event(
             "request_rejected",
             "agent_runtime",
@@ -504,5 +531,18 @@ async def chat_with_agent(
         account_id=account_id,
         message_length=len(question),
     )
-    request_queue.put((session_id, user_name, question, user_role, timestamp, channel_id, platform, account_id, fut))
+    request_queue.put(
+        (
+            session_id,
+            user_name,
+            question,
+            user_role,
+            timestamp,
+            channel_id,
+            platform,
+            account_id,
+            member,
+            fut,
+        )
+    )
     return await asyncio.wrap_future(fut)

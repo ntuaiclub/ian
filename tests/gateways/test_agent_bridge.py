@@ -40,6 +40,7 @@ async def test_agent_bridge_runs_agent_flow_for_normal_response():
         *,
         platform,
         account_id,
+        member,
     ):
         calls.append(
             (
@@ -52,6 +53,7 @@ async def test_agent_bridge_runs_agent_flow_for_normal_response():
                 channel_id,
                 platform,
                 account_id,
+                member,
             )
         )
         return "正常回覆"
@@ -84,6 +86,7 @@ async def test_agent_bridge_runs_agent_flow_for_normal_response():
             "channel-1",
             "Discord",
             "account-1",
+            None,
         ),
     ]
 
