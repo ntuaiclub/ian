@@ -70,6 +70,13 @@ ntuai-watson-agent/
 ├── pyproject.toml          # Python 專案 metadata 與依賴群組
 ├── uv.lock                 # 可重現安裝的依賴 lockfile
 ├── .env.example            # 環境變數範本
+└── data/
+    ├── ntuai_zh_base.md
+    └── ntuai_recompiled_index.jsonl
+```
+
+## 依賴方向
+
 ```text
 Discord / Facebook / LINE / FastMCP / CLI
               |
@@ -88,6 +95,24 @@ Discord / Facebook / LINE / FastMCP / CLI
 ian.bootstrap 是 application 與 infrastructure 的唯一組裝點。
 Agent runtime 與 RAG 暫留 ian.services，作為後續獨立重構範圍。
 ```
+
+## 核心元件
+
+### Host Agent Client (`ian.services.agent`)
+
+- 使用 LangGraph 與 Gemini 建立 Agent 推理迴圈。
+- 管理 session、每日用量、Prompt Injection 偵測與 URL 驗證。
+- 透過本機 Streamable HTTP MCP server 呼叫 Ian tools。
+
+### MCP Tool Server (`ian.gateways.mcp_server`)
+
+基於 FastMCP，固定使用 Streamable HTTP transport：
+
+| 工具名稱 | 功能 | 參數 |
+|----------|------|------|
+| `event_retriever` | 依 Membership tier 搜尋可見活動 | `platform`, `account_id`, `query` |
+| `qa_retreviler` | 社團 FAQ 混合搜尋 | `query`, `top_k` |
+| `notify_staff` | 將問題轉交 Discord 幹部頻道 | `message`, `user_name`, `platform`, `context` |
 | `notify_members` | 幹部依每位社員選定的平台發送通知 | `platform`, `account_id`, `event_id`, `note`, `custom_message` |
 | `generate_checkin_code` | 產生使用者專屬的活動簽到碼連結 | `platform`, `account_id`, `name`, `email` |
 | `bind_email` | 透過 Email 綁定社員身分 | `email`, `platform`, `account_id` |
