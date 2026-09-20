@@ -22,7 +22,7 @@ import json
 
 import pytest
 
-from ian.services.service_supervisor import build_serve_commands, serve_all
+from ian.entrypoints.supervisor import build_serve_commands, serve_all
 
 
 class FakeProcess:
@@ -70,7 +70,13 @@ def test_serve_all_waits_for_mcp_before_starting_other_services(capsys):
         return processes[len(started) - 1]
 
     def fake_wait_for_http(url, timeout_seconds):
-        health_checks.append({"url": url, "timeout_seconds": timeout_seconds, "started": list(started)})
+        health_checks.append(
+            {
+                "url": url,
+                "timeout_seconds": timeout_seconds,
+                "started": list(started),
+            }
+        )
 
     def fake_sleep(seconds):
         return None

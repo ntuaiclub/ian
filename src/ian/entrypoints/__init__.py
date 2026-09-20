@@ -17,5 +17,3 @@
 # You should have received a copy of the GNU General Public License
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
-
-"""Stateful and I/O-backed services."""

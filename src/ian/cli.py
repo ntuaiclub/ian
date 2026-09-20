@@ -63,7 +63,7 @@ def reminder(
     date: str | None = typer.Option(None, "--date", help="Check specific date (YYYY/MM/DD)."),
 ) -> None:
     """Run the daily event reminder."""
-    from ian.services.reminder_runner import daemon_loop, run_once
+    from ian.entrypoints.reminder import daemon_loop, run_once
 
     if daemon:
         daemon_loop()
@@ -85,7 +85,7 @@ def serve(
     health_timeout: int = typer.Option(90, "--health-timeout", help="Seconds to wait for MCP health."),
 ) -> None:
     """Run the full Ian service stack."""
-    from ian.services.service_supervisor import serve_all
+    from ian.entrypoints.supervisor import serve_all
 
     raise SystemExit(serve_all(mcp_port=mcp_port, health_timeout=health_timeout))
 

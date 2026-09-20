@@ -26,7 +26,7 @@ import pytest
 
 from ian.application.notifications import DeliveryReport
 from ian.application.reminders import ReminderLoadError, ReminderRunResult
-from ian.services import reminder_runner
+import ian.entrypoints.reminder as reminder
 
 
 TARGET_DATE = "2026/07/12"
@@ -37,13 +37,13 @@ def stub_result(monkeypatch, result):
         assert target_date == date(2026, 7, 12)
         return result
 
-    monkeypatch.setattr(reminder_runner.reminder_service, "run", run)
+    monkeypatch.setattr(reminder.reminder_service, "run", run)
 
 
 def test_run_once_logs_no_events(monkeypatch, capsys):
     stub_result(monkeypatch, ReminderRunResult("no_events", (), 0))
 
-    reminder_runner.run_once(target_date=TARGET_DATE)
+    reminder.run_once(target_date=TARGET_DATE)
 
     completed = json.loads(capsys.readouterr().err.splitlines()[-1])
     assert completed["status"] == "success"
@@ -52,16 +52,16 @@ def test_run_once_logs_no_events(monkeypatch, capsys):
 
 def test_run_once_uses_one_asyncio_boundary(monkeypatch):
     stub_result(monkeypatch, ReminderRunResult("no_events", (), 0))
-    real_run = reminder_runner.asyncio.run
+    real_run = reminder.asyncio.run
     coroutines = []
 
     def counted_run(coroutine):
         coroutines.append(coroutine)
         return real_run(coroutine)
 
-    monkeypatch.setattr(reminder_runner.asyncio, "run", counted_run)
+    monkeypatch.setattr(reminder.asyncio, "run", counted_run)
 
-    reminder_runner.run_once(target_date=TARGET_DATE)
+    reminder.run_once(target_date=TARGET_DATE)
 
     assert len(coroutines) == 1
 
@@ -80,10 +80,10 @@ async def test_sync_entrypoint_rejects_running_loop_before_creating_coroutine(
 
         return noop()
 
-    monkeypatch.setattr(reminder_runner, "_run_once", create_run_once)
+    monkeypatch.setattr(reminder, "_run_once", create_run_once)
 
     with pytest.raises(RuntimeError, match="called from an async context"):
-        reminder_runner.run_once(target_date=TARGET_DATE)
+        reminder.run_once(target_date=TARGET_DATE)
 
     assert created == []
 
@@ -95,16 +95,16 @@ def test_run_once_reports_dependency_failure(monkeypatch, stage):
     async def fail(*_args, **_kwargs):
         raise ReminderLoadError(stage, RuntimeError("unavailable"))
 
-    monkeypatch.setattr(reminder_runner.reminder_service, "run", fail)
+    monkeypatch.setattr(reminder.reminder_service, "run", fail)
 
     async def send_log(message):
         logs.append(message)
 
-    monkeypatch.setattr(reminder_runner.operational_notifier, "send_log", send_log)
+    monkeypatch.setattr(reminder.operational_notifier, "send_log", send_log)
 
-    reminder_runner.run_once(target_date=TARGET_DATE)
+    reminder.run_once(target_date=TARGET_DATE)
 
-    expected = reminder_runner._FAILURE_NOTIFICATIONS[stage]
+    expected = reminder._FAILURE_NOTIFICATIONS[stage]
     assert logs == [f"```\n[REMINDER] {expected}\n```"]
 
 
@@ -114,7 +114,7 @@ def test_run_once_maps_dry_run_result(monkeypatch, capsys):
         ReminderRunResult("dry_run", ("Event 1",), recipient_count=2),
     )
 
-    reminder_runner.run_once(target_date=TARGET_DATE, dry=True)
+    reminder.run_once(target_date=TARGET_DATE, dry=True)
 
     completed = json.loads(capsys.readouterr().err.splitlines()[-1])
     assert completed["status"] == "dry_run"
@@ -138,9 +138,9 @@ def test_run_once_logs_completed_delivery(monkeypatch):
     async def send_log(message):
         logs.append(message)
 
-    monkeypatch.setattr(reminder_runner.operational_notifier, "send_log", send_log)
+    monkeypatch.setattr(reminder.operational_notifier, "send_log", send_log)
 
-    reminder_runner.run_once(target_date=TARGET_DATE)
+    reminder.run_once(target_date=TARGET_DATE)
 
     assert "Events on 2026/07/12: Event 1, Event 2" in logs[0]
     assert "Discord: 1 sent, 0 failed" in logs[0]
@@ -153,7 +153,7 @@ async def test_daemon_continues_when_failure_notification_also_fails(monkeypatch
     notifications = []
 
     monkeypatch.setattr(
-        reminder_runner,
+        reminder,
         "seconds_until_next_run",
         lambda **_kwargs: 0,
     )
@@ -171,16 +171,16 @@ async def test_daemon_continues_when_failure_notification_also_fails(monkeypatch
         notifications.append(message)
         raise RuntimeError("notifier failed")
 
-    monkeypatch.setattr(reminder_runner.asyncio, "sleep", no_sleep)
-    monkeypatch.setattr(reminder_runner, "_run_once", fail_then_cancel)
+    monkeypatch.setattr(reminder.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(reminder, "_run_once", fail_then_cancel)
     monkeypatch.setattr(
-        reminder_runner.operational_notifier,
+        reminder.operational_notifier,
         "send_log",
         fail_to_notify,
     )
 
     with pytest.raises(asyncio.CancelledError):
-        await reminder_runner._daemon_loop()
+        await reminder._daemon_loop()
 
     assert len(runs) == 2
     assert notifications == ["```\n[REMINDER] ERROR\n```"]
@@ -198,10 +198,10 @@ def test_run_once_uses_taipei_tomorrow_when_date_is_omitted(monkeypatch):
         checked_dates.append(target_date)
         return ReminderRunResult("no_events", (), 0)
 
-    monkeypatch.setattr(reminder_runner, "datetime", FixedDateTime)
-    monkeypatch.setattr(reminder_runner.reminder_service, "run", run)
+    monkeypatch.setattr(reminder, "datetime", FixedDateTime)
+    monkeypatch.setattr(reminder.reminder_service, "run", run)
 
-    reminder_runner.run_once()
+    reminder.run_once()
 
     assert [value.isoformat() for value in checked_dates] == ["2027-01-01"]
 
@@ -227,4 +227,4 @@ def test_seconds_until_next_run_handles_target_boundaries(
         tzinfo=timezone(timedelta(hours=8)),
     )
 
-    assert reminder_runner.seconds_until_next_run(now, hour=19, minute=0) == expected
+    assert reminder.seconds_until_next_run(now, hour=19, minute=0) == expected

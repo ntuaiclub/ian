@@ -75,7 +75,7 @@ def test_reminder_command_delegates_to_app(monkeypatch):
 
     monkeypatch.setitem(
         sys.modules,
-        "ian.services.reminder_runner",
+        "ian.entrypoints.reminder",
         SimpleNamespace(
             run_once=fake_main,
             daemon_loop=lambda: fake_main(daemon=True),
@@ -92,7 +92,7 @@ def test_reminder_daemon_command_delegates_to_daemon_loop(monkeypatch):
     calls = []
     monkeypatch.setitem(
         sys.modules,
-        "ian.services.reminder_runner",
+        "ian.entrypoints.reminder",
         SimpleNamespace(
             run_once=lambda **_kwargs: calls.append("once"),
             daemon_loop=lambda: calls.append("daemon"),
@@ -114,7 +114,7 @@ def test_serve_command_delegates_to_app(monkeypatch):
 
     monkeypatch.setitem(
         sys.modules,
-        "ian.services.service_supervisor",
+        "ian.entrypoints.supervisor",
         SimpleNamespace(serve_all=fake_main),
     )
 

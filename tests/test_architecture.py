@@ -41,6 +41,7 @@ def test_domain_does_not_depend_on_outer_layers():
         "ian.application",
         "ian.bootstrap",
         "ian.config",
+        "ian.entrypoints",
         "ian.gateways",
         "ian.infrastructure",
         "ian.services",
@@ -58,6 +59,7 @@ def test_application_does_not_depend_on_adapters_or_external_sdks():
     forbidden = (
         "ian.bootstrap",
         "ian.config",
+        "ian.entrypoints",
         "ian.gateways",
         "ian.infrastructure",
         "ian.services",
@@ -77,9 +79,10 @@ def test_application_does_not_depend_on_adapters_or_external_sdks():
     assert violations == []
 
 
-def test_infrastructure_does_not_depend_on_services_gateways_or_bootstrap():
+def test_infrastructure_does_not_depend_on_entrypoints_gateways_or_bootstrap():
     forbidden = (
         "ian.bootstrap",
+        "ian.entrypoints",
         "ian.gateways",
         "ian.services",
     )
@@ -133,6 +136,9 @@ def test_legacy_service_and_gateway_modules_are_removed():
         SRC_ROOT / "services/notifications.py",
         SRC_ROOT / "services/discord_api.py",
         SRC_ROOT / "services/rag.py",
+        SRC_ROOT / "services/reminder_runner.py",
+        SRC_ROOT / "services/service_supervisor.py",
+        SRC_ROOT / "services/__init__.py",
         SRC_ROOT / "gateways/agent_bridge.py",
     ]
 
@@ -158,6 +164,21 @@ def test_gateways_do_not_import_concrete_adapters():
     )
     violations = []
     for path in sorted((SRC_ROOT / "gateways").rglob("*.py")):
+        for module in imported_modules(path):
+            if module.startswith(forbidden):
+                violations.append(f"{path}: {module}")
+
+    assert violations == []
+
+
+def test_entrypoints_do_not_import_concrete_adapters_or_gateways():
+    forbidden = (
+        "ian.gateways",
+        "ian.infrastructure",
+        "ian.services",
+    )
+    violations = []
+    for path in sorted((SRC_ROOT / "entrypoints").rglob("*.py")):
         for module in imported_modules(path):
             if module.startswith(forbidden):
                 violations.append(f"{path}: {module}")

@@ -36,7 +36,7 @@
 - **Domain 層**：`ian.domain` 保存 Event、Member 與純規則，不依賴環境設定或外部 SDK。
 - **Application 層**：`ian.application` 保存 Event、Member、提醒、社員通知與 RAG use cases／DTO，以及 application 所擁有的 outbound Protocol。
 - **Infrastructure 層**：`ian.infrastructure` 實作 Payload MCP repositories、Discord／Facebook／LINE notification adapters、LangGraph Agent adapter/runtime，以及 Hybrid RAG 的 BM25／FAISS runtime。
-- **Services 層**：`ian.services` 只暫留 process runners 與 supervisor；不包含 application use case 或 concrete adapter。
+- **Entrypoints 層**：`ian.entrypoints` 保存 reminder scheduler 與多程序 supervisor，只負責 process lifecycle 並透過 bootstrap 取得 application services。
 - **Bootstrap**：`ian.bootstrap` 是 repositories、notification adapters、Agent/RAG adapters 與 application services 的唯一組裝點；組裝本身不載入 RAG 模型、不執行網路 I/O、不啟動 thread，也不傳送通知。
 - **Gateway 層**：各平台入口。`ian.gateways.discord_bot` 處理 Discord Slash Commands；`ian.gateways.webhook_server` (Flask) 負責 Webhook route wiring，並委派給 `ian.gateways.facebook_webhook` 與 `ian.gateways.line_webhook` 處理 Facebook Messenger / LINE 平台細節。
 - **Host Agent Client**：`ian.application.agent.AgentService` 只依賴 `AgentPort`；`ian.infrastructure.agent.LangGraphAgentAdapter` 封裝 queue-based LangGraph runtime、Gemini、MCP tools 與 session lifecycle。
@@ -53,7 +53,7 @@ ntuai-watson-agent/
 │       ├── application/    # use cases、DTO 與 outbound Protocols
 │       ├── infrastructure/ # Payload MCP、notification、Agent 與 RAG runtime
 │       ├── gateways/       # Discord、Webhook、FastMCP inbound adapters
-│       ├── services/       # 暫留 process runners 與 supervisor
+│       ├── entrypoints/    # Reminder scheduler 與 process supervisor
 │       ├── bootstrap.py    # 唯一 dependency composition root
 │       ├── config.py       # 環境變數與檔案路徑設定
 │       └── cli.py          # Typer CLI：`ian ...`
@@ -61,7 +61,7 @@ ntuai-watson-agent/
 │   ├── domain/             # 純邏輯 pytest 覆蓋
 │   ├── application/        # use case 與 port 邊界 pytest 覆蓋
 │   ├── infrastructure/     # concrete adapter pytest 覆蓋
-│   ├── services/           # process runner pytest 覆蓋
+│   ├── entrypoints/        # process lifecycle pytest 覆蓋
 │   ├── agent/              # Agent runtime placeholder（目前 intentionally skipped）
 │   └── integration/        # MCP/LLM/平台整合測試 placeholder（目前 intentionally skipped）
 ├── Dockerfile              # NVIDIA CUDA 12.1 + Python 3.11 映像
@@ -80,15 +80,16 @@ ntuai-watson-agent/
 ## 依賴方向
 
 ```text
-Discord / Facebook / LINE / FastMCP / CLI
-              |
-              v
-          ian.gateways
-              |
-              v
-         ian.application  --->  ian.domain
-              ^
-              |
+Discord / Facebook / LINE / FastMCP       CLI / daemon
+         |                            |
+         v                            v
+       ian.gateways               ian.entrypoints
+         |                            |
+         +------------+---------------+
+             v
+          ian.application  --->  ian.domain
+             ^
+             |
           ian.infrastructure
         /          |          |          \
       payload_mcp notifications  agent       rag
@@ -143,7 +144,7 @@ ian.bootstrap 是 application ports 與 concrete adapters 的唯一組裝點。
 - 未指定活動時，自動列出即將舉辦的 3 場活動供選擇。
 - 依每位社員的單一 `subscribe` 平台，透過 Discord、Facebook 或 LINE 發送。
 
-### Daily Event Reminder (`ian.services.reminder_runner`)
+### Daily Event Reminder (`ian.entrypoints.reminder`)
 
 - 每日 **19:00 UTC+8** 透過 Event MCP 檢查隔天活動，依每位收件者 tier 過濾後發送。
 - 通知內容包含完整活動資訊（課程大綱、講者、是否直播/錄影、講義連結、課程對象等），自動處理空值。
