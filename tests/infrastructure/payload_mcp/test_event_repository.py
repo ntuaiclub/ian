@@ -144,9 +144,7 @@ async def test_find_by_id_rejects_mismatched_document_id():
 
 @pytest.mark.asyncio
 async def test_repository_skips_invalid_documents_and_keeps_valid_events():
-    caller = QueueCaller(
-        mcp_text(event_document(1, title=" "), event_document(2))
-    )
+    caller = QueueCaller(mcp_text(event_document(1, title=" "), event_document(2)))
 
     events = await PayloadMcpEventRepository(caller).list_published()
 

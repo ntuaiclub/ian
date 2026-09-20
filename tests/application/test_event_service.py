@@ -22,8 +22,8 @@ from datetime import date, datetime, timedelta, timezone
 
 import pytest
 
-from ian.domain.events import Event
 from ian.application.events import EventService
+from ian.domain.events import Event
 
 
 TPE = timezone(timedelta(hours=8))
@@ -82,7 +82,16 @@ async def test_list_events_on_date_uses_taipei_half_open_boundary_and_tier():
 @pytest.mark.asyncio
 async def test_search_events_matches_structured_and_lexical_text():
     target = event(1, title="MCP Basics")
-    target.content = {"root": {"children": [{"type": "paragraph", "children": [{"text": "Payload integration"}]}]}}
+    target.content = {
+        "root": {
+            "children": [
+                {
+                    "type": "paragraph",
+                    "children": [{"text": "Payload integration"}],
+                }
+            ]
+        }
+    }
     service = EventService(FakeRepository([target, event(2, tier=2, title="Hidden")]))
 
     results = await service.search_events("payload", viewer_tier=1)

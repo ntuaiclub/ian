@@ -25,17 +25,11 @@ from datetime import datetime, timezone
 import pytest
 
 from ian.domain.members import Platform
-from ian.infrastructure.payload_mcp.client import (
-    PayloadMcpConfigurationError,
-    PayloadMcpSchemaError,
-    StreamableHttpMcpToolCaller,
-    parse_payload_documents,
-)
 from ian.infrastructure.payload_mcp.member_repository import (
     DuplicateMemberError,
-    PayloadMcpMemberRepository,
     MemberRepositoryError,
     MemberTransportError,
+    PayloadMcpMemberRepository,
 )
 
 
@@ -83,30 +77,6 @@ class QueueCaller:
         return self.responses.popleft()
 
 
-def test_parse_payload_documents_extracts_multiple_fenced_documents():
-    assert parse_payload_documents(mcp_text({"id": 1}, {"id": 2})) == [
-        {"id": 1},
-        {"id": 2},
-    ]
-
-
-def test_parse_payload_documents_handles_empty_result():
-    assert parse_payload_documents(mcp_text()) == []
-
-
-@pytest.mark.parametrize("text", ["no json here", "```json\ninvalid\n```"])
-def test_parse_payload_documents_rejects_invalid_contract(text):
-    with pytest.raises(PayloadMcpSchemaError):
-        parse_payload_documents(text)
-
-
-def test_streamable_caller_requires_url_and_api_key():
-    caller = StreamableHttpMcpToolCaller("", "", 20)
-
-    with pytest.raises(PayloadMcpConfigurationError):
-        caller._require_config()
-
-
 @pytest.mark.asyncio
 async def test_find_user_by_email_uses_whitelisted_fields_and_memberships():
     caller = QueueCaller(mcp_text(user_doc()), mcp_text(membership_doc()))
@@ -120,7 +90,9 @@ async def test_find_user_by_email_uses_whitelisted_fields_and_memberships():
     tool, arguments = caller.calls[0]
     assert tool == "findUsers"
     assert arguments["depth"] == 0
-    assert json.loads(arguments["where"]) == {"email": {"equals": "test@example.test"}}
+    assert json.loads(arguments["where"]) == {
+        "email": {"equals": "test@example.test"}
+    }
     selected = json.loads(arguments["select"])
     assert "account" not in selected
     assert "session" not in selected

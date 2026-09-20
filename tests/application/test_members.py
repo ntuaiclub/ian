@@ -22,8 +22,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from ian.domain.members import MemberDataError, Membership, Platform, User
 from ian.application.members import MemberService
+from ian.domain.members import MemberDataError, Membership, Platform, User
 
 
 NOW = datetime(2026, 7, 18, 12, tzinfo=timezone.utc)

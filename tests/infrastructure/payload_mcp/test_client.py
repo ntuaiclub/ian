@@ -33,6 +33,12 @@ def test_parse_payload_documents_extracts_fenced_json_and_empty_results():
     assert parse_payload_documents('Found 0 documents') == []
 
 
+def test_parse_payload_documents_extracts_multiple_fenced_documents():
+    text = '```json\n{"id": 1}\n```\n```json\n{"id": 2}\n```'
+
+    assert parse_payload_documents(text) == [{"id": 1}, {"id": 2}]
+
+
 @pytest.mark.parametrize("text", ["not JSON", "```json\ninvalid\n```"])
 def test_parse_payload_documents_rejects_invalid_text_contract(text):
     with pytest.raises(PayloadMcpSchemaError):

@@ -50,13 +50,13 @@ async def test_langgraph_adapter_maps_request_to_runtime(monkeypatch):
         calls.append(("chat", args, kwargs))
         return "agent response"
 
-    runtime = SimpleNamespace(
+    runtime_module = SimpleNamespace(
         start_dispatcher=lambda name, current_time: calls.append(
             ("start", name, current_time)
         ),
         chat_with_agent=chat,
     )
-    monkeypatch.setattr(langgraph, "_load_runtime", lambda: runtime)
+    monkeypatch.setattr(langgraph, "_load_runtime", lambda: runtime_module)
     discord = FakeDiscord()
     adapter = langgraph.LangGraphAgentAdapter(discord, 123)
     request = AgentRequest(
@@ -159,4 +159,13 @@ def test_dispatcher_starts_only_once(monkeypatch):
 
     assert first is second
     assert calls.count("thread_start") == 1
-    assert len([call for call in calls if isinstance(call, tuple) and call[0] == "scheduled"]) == 1
+    assert (
+        len(
+            [
+                call
+                for call in calls
+                if isinstance(call, tuple) and call[0] == "scheduled"
+            ]
+        )
+        == 1
+    )
