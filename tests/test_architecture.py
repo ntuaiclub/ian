@@ -96,6 +96,7 @@ def test_concrete_adapters_are_only_composed_in_bootstrap():
     constructor_names = {
         "DiscordHttpClient",
         "DiscordOperationalNotifier",
+        "HybridRagAdapter",
         "LangGraphAgentAdapter",
         "PayloadMcpEventRepository",
         "PayloadMcpMemberRepository",
@@ -131,6 +132,7 @@ def test_legacy_service_and_gateway_modules_are_removed():
         SRC_ROOT / "services/payload_mcp_client.py",
         SRC_ROOT / "services/notifications.py",
         SRC_ROOT / "services/discord_api.py",
+        SRC_ROOT / "services/rag.py",
         SRC_ROOT / "gateways/agent_bridge.py",
     ]
 
@@ -147,11 +149,12 @@ def test_gateways_do_not_import_payload_mcp_adapters():
     assert violations == []
 
 
-def test_gateways_do_not_import_concrete_agent_or_notification_adapters():
+def test_gateways_do_not_import_concrete_adapters():
     forbidden = (
         "ian.infrastructure.agent",
         "ian.infrastructure.notifications",
-        "ian.services.agent",
+        "ian.infrastructure.rag",
+        "ian.services",
     )
     violations = []
     for path in sorted((SRC_ROOT / "gateways").rglob("*.py")):

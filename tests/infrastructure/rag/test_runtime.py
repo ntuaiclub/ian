@@ -24,7 +24,7 @@ import json
 import pytest
 from langchain_core.documents import Document
 
-from ian.services import rag
+import ian.infrastructure.rag.runtime as rag
 
 
 @pytest.fixture(autouse=True)
@@ -131,8 +131,50 @@ def test_load_markdown_data_handles_valid_and_missing_files(
                 "urls": ["https://example.test"],
             },
             "entity",
-            ("實體類型：contact", "名稱：NTUAI", "club@example.test", "https://example.test"),
+            (
+                "實體類型：contact",
+                "名稱：NTUAI",
+                "club@example.test",
+                "https://example.test",
+            ),
             id="entity",
+        ),
+        pytest.param(
+            {
+                "type": "entity",
+                "id": "membership-1",
+                "entity_type": "membership_fee",
+                "name": "社費政策",
+                "plans": {
+                    "動手實踐者": {
+                        "amount": 3000,
+                        "duration": "一個學期",
+                        "benefits": ["技術課程"],
+                    }
+                },
+                "refund_policy": "30 天內可退費",
+                "payment": {"bank_account": "000123"},
+            },
+            "entity",
+            (
+                "社費方案：動手實踐者 $3000",
+                "方案權益：技術課程",
+                "退費政策：30 天內可退費",
+                "繳費資訊：000123",
+            ),
+            id="membership-entity",
+        ),
+        pytest.param(
+            {
+                "type": "entity",
+                "id": "schedule-1",
+                "entity_type": "course_schedule",
+                "name": "社課時間",
+                "schedule": "星期四晚上 7 點到 9 點",
+            },
+            "entity",
+            ("課程安排：星期四晚上 7 點到 9 點",),
+            id="schedule-entity",
         ),
     ],
 )
@@ -152,13 +194,17 @@ def test_create_enhanced_documents_maps_jsonl_types(
 def test_create_enhanced_documents_maps_markdown_sections(monkeypatch):
     monkeypatch.setattr(rag, "extract_keywords", lambda _text: ["keyword"])
 
-    documents = rag.create_enhanced_documents([], "# Introduction\nWelcome\n## Events\nWeekly talks")
+    documents = rag.create_enhanced_documents(
+        [], "# Introduction\nWelcome\n## Events\nWeekly talks"
+    )
 
     assert [document.metadata["section_title"] for document in documents] == [
         "Introduction",
         "Events",
     ]
-    assert all(document.metadata["type"] == "markdown_section" for document in documents)
+    assert all(
+        document.metadata["type"] == "markdown_section" for document in documents
+    )
     assert "內容：## Events\nWeekly talks" in documents[1].page_content
 
 
@@ -206,12 +252,20 @@ def test_hybrid_search_combines_and_ranks_bm25_and_semantic_results(monkeypatch)
     monkeypatch.setattr(
         rag,
         "bm25_search",
-        lambda query, top_k: [(bm25_first, 10.0), (shared, 5.0), (semantic_first, 0.0)],
+        lambda query, top_k: [
+            (bm25_first, 10.0),
+            (shared, 5.0),
+            (semantic_first, 0.0),
+        ],
     )
     monkeypatch.setattr(
         rag,
         "semantic_search",
-        lambda query, top_k: [(semantic_first, 0.0), (shared, 0.5), (bm25_first, 1.0)],
+        lambda query, top_k: [
+            (semantic_first, 0.0),
+            (shared, 0.5),
+            (bm25_first, 1.0),
+        ],
     )
 
     results = rag.hybrid_search("query", top_k=2, alpha=0.25)
@@ -285,7 +339,9 @@ def test_initialize_rag_system_logs_embedding_failure_without_error_message(
     monkeypatch.setattr(
         rag,
         "HuggingFaceEmbeddings",
-        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("private model detail")),
+        lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError("private model detail")
+        ),
     )
 
     assert rag.initialize_rag_system() is False

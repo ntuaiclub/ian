@@ -21,6 +21,7 @@
 import asyncio
 import time
 from datetime import date, datetime, timedelta
+from typing import Any, Callable, Coroutine
 
 from ian.application.reminders import ReminderLoadError
 from ian.bootstrap import get_application
@@ -38,6 +39,32 @@ reminder_service = application.reminders
 operational_notifier = application.operational_notifications
 
 
+def _run_coroutine(
+    coroutine_factory: Callable[[], Coroutine[Any, Any, None]],
+) -> None:
+    """Run one top-level coroutine from a synchronous process boundary."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.run(coroutine_factory())
+        return
+    raise RuntimeError("synchronous reminder entrypoint called from an async context")
+
+
+async def _send_operational_log(message: str) -> None:
+    try:
+        await operational_notifier.send_log(message)
+    except Exception as error:
+        log_event(
+            "operation_failed",
+            "reminder_runner",
+            level="error",
+            status="error",
+            operation="send_operational_log",
+            error=error,
+        )
+
+
 def seconds_until_next_run(
     now: datetime | None = None,
     hour: int = REMINDER_HOUR,
@@ -50,7 +77,7 @@ def seconds_until_next_run(
     return (target - current).total_seconds()
 
 
-def _report_job_failure(
+async def _report_job_failure(
     started_at: float,
     target_date: str,
     stage: str,
@@ -67,14 +94,12 @@ def _report_job_failure(
         target_date=target_date,
         error=error,
     )
-    asyncio.run(
-        operational_notifier.send_log(
-            f"```\n[REMINDER] {_FAILURE_NOTIFICATIONS[stage]}\n```"
-        )
+    await _send_operational_log(
+        f"```\n[REMINDER] {_FAILURE_NOTIFICATIONS[stage]}\n```"
     )
 
 
-def run_once(target_date: str | None = None, dry: bool = False):
+async def _run_once(target_date: str | None = None, dry: bool = False) -> None:
     started_at = time.monotonic()
     now = datetime.now(TZ_TPE)
 
@@ -86,7 +111,7 @@ def run_once(target_date: str | None = None, dry: bool = False):
     try:
         parsed_target_date = date.fromisoformat(normalized_target_date)
     except ValueError as error:
-        _report_job_failure(started_at, target_date, "load_events", error)
+        await _report_job_failure(started_at, target_date, "load_events", error)
         return
 
     log_event(
@@ -99,9 +124,9 @@ def run_once(target_date: str | None = None, dry: bool = False):
     )
 
     try:
-        result = asyncio.run(reminder_service.run(parsed_target_date, dry=dry))
+        result = await reminder_service.run(parsed_target_date, dry=dry)
     except ReminderLoadError as error:
-        _report_job_failure(started_at, target_date, error.stage, error)
+        await _report_job_failure(started_at, target_date, error.stage, error)
         return
 
     if result.status == "no_events":
@@ -156,10 +181,14 @@ def run_once(target_date: str | None = None, dry: bool = False):
         sent_count=delivery.sent_count,
         failed_count=delivery.failed_count,
     )
-    asyncio.run(operational_notifier.send_log(summary))
+    await _send_operational_log(summary)
 
 
-def daemon_loop():
+def run_once(target_date: str | None = None, dry: bool = False) -> None:
+    _run_coroutine(lambda: _run_once(target_date=target_date, dry=dry))
+
+
+async def _daemon_loop() -> None:
     log_event(
         "service_started",
         "reminder_runner",
@@ -177,9 +206,9 @@ def daemon_loop():
             wait_seconds=wait,
             next_run=next_run.isoformat(),
         )
-        time.sleep(wait)
+        await asyncio.sleep(wait)
         try:
-            run_once()
+            await _run_once()
         except Exception as e:
             log_event(
                 "job_failed",
@@ -190,4 +219,8 @@ def daemon_loop():
                 stage="daemon_loop",
                 error=e,
             )
-            asyncio.run(operational_notifier.send_log("```\n[REMINDER] ERROR\n```"))
+            await _send_operational_log("```\n[REMINDER] ERROR\n```")
+
+
+def daemon_loop() -> None:
+    _run_coroutine(_daemon_loop)

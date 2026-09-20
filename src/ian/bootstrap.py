@@ -26,7 +26,9 @@ from ian.application.events import EventService
 from ian.application.member_notifications import MemberNotificationService
 from ian.application.members import MemberService
 from ian.application.notifications import NotificationSender, OperationalNotifier
+from ian.application.rag import RagSearchPort, RagService
 from ian.application.reminders import DailyReminderService
+from ian.infrastructure.rag.adapter import HybridRagAdapter
 from ian.infrastructure.payload_mcp.client import (
     McpToolCaller,
     StreamableHttpMcpToolCaller,
@@ -54,6 +56,7 @@ class ApplicationServices:
     reminders: DailyReminderService
     member_notifications: MemberNotificationService
     operational_notifications: OperationalNotifier
+    rag: RagService
 
 
 _default_application: ApplicationServices | None = None
@@ -64,6 +67,7 @@ def build_application(
     notification_sender: NotificationSender | None = None,
     operational_notifier: OperationalNotifier | None = None,
     agent_adapter: AgentPort | None = None,
+    rag_adapter: RagSearchPort | None = None,
 ) -> ApplicationServices:
     """Compose application services without performing network I/O."""
     discord: DiscordHttpClient | None = None
@@ -114,6 +118,8 @@ def build_application(
     if agent_adapter is None:
         assert discord is not None
         agent_adapter = LangGraphAgentAdapter(discord, agent_log_channel_id)
+    if rag_adapter is None:
+        rag_adapter = HybridRagAdapter()
     return ApplicationServices(
         agent=AgentService(agent_adapter),
         events=events,
@@ -126,6 +132,7 @@ def build_application(
             notification_sender,
         ),
         operational_notifications=operational_notifier,
+        rag=RagService(rag_adapter),
     )
 
 

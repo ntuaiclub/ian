@@ -18,7 +18,6 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
-import asyncio
 import warnings
 
 from mcp.server.fastmcp import FastMCP
@@ -35,7 +34,6 @@ from ian.config import (
 )
 from ian.bootstrap import get_application
 from ian.domain.time import TZ_TPE
-from ian.services import rag
 from ian.utils.logging import log_event
 
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
@@ -48,12 +46,13 @@ member_service = application.members
 member_notification_service = application.member_notifications
 checkin_service = application.checkins
 operational_notifier = application.operational_notifications
+rag_service = application.rag
 
 
 def initialize_dependencies() -> None:
     """Initialize external data sources when the MCP server starts."""
     try:
-        rag.initialize_rag_system()
+        rag_service.initialize()
     except Exception as e:
         log_event(
             "operation_failed",
@@ -124,37 +123,36 @@ async def search_qa_chunks_by_semantics(query: str, top_k: int = 5) -> str:
         top_k: 返回最相關的結果數量（預設為5）
     """
     try:
-        if not rag.is_initialized():
+        if not rag_service.is_initialized():
             return "錯誤：RAG 系統未初始化，請檢查資料檔案是否存在"
 
-        # 執行混合搜尋（FAISS + BM25，CPU 密集操作）
-        results = await asyncio.to_thread(rag.hybrid_search, query, top_k, 0.6)
+        results = await rag_service.search(query, top_k)
 
         if not results:
             return "未找到相關資料"
 
         # 格式化結果
         formatted_results = []
-        for i, (doc, score, methods) in enumerate(results, 1):
-            content = doc.page_content
-            metadata = doc.metadata
+        for i, search_result in enumerate(results, 1):
+            result = (
+                f"=== 結果 {i} (相關度: {search_result.score:.3f}, "
+                f"搜尋方法: {search_result.methods}) ===\n"
+            )
+            result += f"內容：{search_result.content}\n"
+            result += f"來源：{search_result.source}\n"
 
-            result = f"=== 結果 {i} (相關度: {score:.3f}, 搜尋方法: {methods}) ===\n"
-            result += f"內容：{content}\n"
-            result += f"來源：{metadata.get('source', 'unknown')}\n"
-
-            if metadata.get("type") == "faq":
+            if search_result.content_type == "faq":
                 result += "類型：FAQ\n"
-                if metadata.get("tags"):
-                    result += f"標籤：{', '.join(metadata.get('tags', []))}\n"
-            elif metadata.get("type") == "entity":
-                result += f"類型：實體資料 ({metadata.get('entity_type', 'unknown')})\n"
-            elif metadata.get("type") == "paragraph":
+                if search_result.tags:
+                    result += f"標籤：{', '.join(search_result.tags)}\n"
+            elif search_result.content_type == "entity":
+                result += f"類型：實體資料 ({search_result.entity_type or 'unknown'})\n"
+            elif search_result.content_type == "paragraph":
                 result += "類型：段落\n"
-                result += f"路徑：{metadata.get('path', 'unknown')}\n"
-            elif metadata.get("section_title"):
+                result += f"路徑：{search_result.path or 'unknown'}\n"
+            elif search_result.section_title:
                 result += "類型：文檔章節\n"
-                result += f"章節：{metadata.get('section_title')}\n"
+                result += f"章節：{search_result.section_title}\n"
 
             formatted_results.append(result)
 

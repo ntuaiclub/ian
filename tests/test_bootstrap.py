@@ -33,6 +33,7 @@ from ian.infrastructure.payload_mcp.event_repository import (
 from ian.infrastructure.payload_mcp.member_repository import (
     PayloadMcpMemberRepository,
 )
+from ian.infrastructure.rag.adapter import HybridRagAdapter
 
 
 class FakeCaller:
@@ -83,6 +84,7 @@ def test_build_application_composes_dependencies_without_io():
     assert application.member_notifications.members is application.members
     assert application.operational_notifications is operational
     assert application.agent.adapter is agent
+    assert isinstance(application.rag.adapter, HybridRagAdapter)
 
 
 def test_get_application_builds_default_graph_once(monkeypatch):
@@ -130,6 +132,7 @@ heavy_prefixes = (
 )
 payload = {
     "adapter_type": type(application.agent.adapter).__name__,
+    "rag_adapter_type": type(application.rag.adapter).__name__,
     "heavy_modules": sorted(
         module
         for module in modules_after - modules_before
@@ -146,6 +149,7 @@ payload = {
         )
         if module in modules_after
     ),
+    "eager_rag_runtime": "ian.infrastructure.rag.runtime" in modules_after,
     "new_threads": sorted(
         thread.name
         for thread in threading.enumerate()
@@ -172,7 +176,9 @@ print(json.dumps(payload))
 
     assert payload == {
         "adapter_type": "LangGraphAgentAdapter",
+        "rag_adapter_type": "HybridRagAdapter",
         "heavy_modules": [],
         "eager_agent_modules": [],
+        "eager_rag_runtime": False,
         "new_threads": [],
     }

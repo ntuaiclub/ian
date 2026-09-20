@@ -14,9 +14,9 @@
 
 - `src/ian/domain/`：無 I/O 的 models 與純規則。
 - `src/ian/application/`：use cases、DTO 與 application-owned Protocols。
-- `src/ian/infrastructure/`：Payload MCP、notification 與 LangGraph concrete adapters。
+- `src/ian/infrastructure/`：Payload MCP、notification、LangGraph 與 Hybrid RAG concrete adapters/runtime。
 - `src/ian/gateways/`：Discord、FB/LINE webhook 與 FastMCP inbound adapters。
-- `src/ian/services/`：暫留 RAG、process runners 與 supervisor；不要在此新增 application use case 或 concrete adapter。
+- `src/ian/services/`：只暫留 process runners 與 supervisor；不要在此新增 application use case 或 concrete adapter。
 - `src/ian/bootstrap.py`：唯一 dependency composition root。
 - `tests/`：pytest 測試，依 domain、application、adapter/gateway 與整體架構規則分類。
 

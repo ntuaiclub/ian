@@ -72,7 +72,9 @@ class SimpleBM25:
                 df[word] = df.get(word, 0) + 1
 
         for word, freq in df.items():
-            self.idf[word] = math.log(1 + (self.doc_count - freq + 0.5) / (freq + 0.5))
+            self.idf[word] = math.log(
+                1 + (self.doc_count - freq + 0.5) / (freq + 0.5)
+            )
 
     def get_scores(self, query):
         scores = []
@@ -87,7 +89,11 @@ class SimpleBM25:
                     score += (
                         idf
                         * (tf * (self.k1 + 1))
-                        / (tf + self.k1 * (1 - self.b + self.b * doc_len / self.avgdl))
+                        / (
+                            tf
+                            + self.k1
+                            * (1 - self.b + self.b * doc_len / self.avgdl)
+                        )
                     )
 
             scores.append(score)
@@ -160,7 +166,9 @@ def extract_keywords(text: str, top_k: int = 5) -> List[str]:
         return [word for word, _ in word_freq.most_common(top_k) if len(word) > 1]
 
 
-def create_enhanced_documents(jsonl_data: List[Dict], md_content: str) -> List[Document]:
+def create_enhanced_documents(
+    jsonl_data: List[Dict], md_content: str
+) -> List[Document]:
     enhanced_documents = []
 
     for item in jsonl_data:
@@ -214,15 +222,43 @@ def create_enhanced_documents(jsonl_data: List[Dict], md_content: str) -> List[D
             content_parts = [f"實體類型：{entity_type}", f"名稱：{name}"]
 
             if entity_type == "membership_fee":
-                fees = item.get("fees", {})
-                content_parts.extend(
-                    [
-                        f"社費 學期費用 {fees.get('semester_fee', '')}元",
-                        f"社費 學年費用 {fees.get('year_fee', {}).get('amount', '')}元",
-                        f"社費 終身費用 {fees.get('lifetime_fee', '')}元",
-                        "繳費 報名 加入社團 收費 費用",
-                    ]
-                )
+                plans = item.get("plans", {})
+                if plans:
+                    for plan_name, plan in plans.items():
+                        amount = plan.get("amount", "")
+                        duration = plan.get("duration", "")
+                        benefits = "、".join(plan.get("benefits", []))
+                        content_parts.append(
+                            f"社費方案：{plan_name} ${amount}，期間：{duration}"
+                        )
+                        if benefits:
+                            content_parts.append(f"方案權益：{benefits}")
+                else:
+                    fees = item.get("fees", {})
+                    content_parts.extend(
+                        [
+                            f"社費 學期費用 {fees.get('semester_fee', '')}元",
+                            "社費 學年費用 "
+                            f"{fees.get('year_fee', {}).get('amount', '')}元",
+                            f"社費 終身費用 {fees.get('lifetime_fee', '')}元",
+                        ]
+                    )
+                for label, key in (
+                    ("退費政策", "refund_policy"),
+                    ("獎勵政策", "reward_policy"),
+                    ("備註", "notes"),
+                ):
+                    if item.get(key):
+                        content_parts.append(f"{label}：{item[key]}")
+                payment = item.get("payment", {})
+                if payment:
+                    content_parts.append(
+                        "繳費資訊："
+                        + "、".join(
+                            str(value) for value in payment.values() if value
+                        )
+                    )
+                content_parts.append("繳費 報名 加入社團 收費 費用")
             elif entity_type == "contact":
                 emails = item.get("emails", [])
                 urls = item.get("urls", [])
@@ -234,6 +270,9 @@ def create_enhanced_documents(jsonl_data: List[Dict], md_content: str) -> List[D
                     ]
                 )
             elif entity_type == "course_schedule":
+                schedule = item.get("schedule", "")
+                if schedule:
+                    content_parts.append(f"課程安排：{schedule}")
                 content_parts.extend(
                     [
                         "社課時間 上課時間 星期四 週四 晚上 7點 9點",
@@ -317,7 +356,11 @@ def build_bm25_index():
     bm25_corpus = []
     for doc in documents:
         tokens = list(jieba.cut(doc.page_content))
-        tokens = [token.strip() for token in tokens if token.strip() and len(token.strip()) > 1]
+        tokens = [
+            token.strip()
+            for token in tokens
+            if token.strip() and len(token.strip()) > 1
+        ]
         bm25_corpus.append(tokens)
         bm25_docs.append(doc)
 
@@ -336,7 +379,11 @@ def bm25_search(query: str, top_k: int = 10) -> List[Tuple[Document, float]]:
         return []
 
     query_tokens = list(jieba.cut(query))
-    query_tokens = [token.strip() for token in query_tokens if token.strip() and len(token.strip()) > 1]
+    query_tokens = [
+        token.strip()
+        for token in query_tokens
+        if token.strip() and len(token.strip()) > 1
+    ]
     if not query_tokens:
         return []
 
@@ -352,7 +399,9 @@ def semantic_search(query: str, top_k: int = 10) -> List[Tuple[Document, float]]
     return vector_store.similarity_search_with_score(query, k=top_k)
 
 
-def hybrid_search(query: str, top_k: int = 5, alpha: float = 0.6) -> List[Tuple[Document, float, str]]:
+def hybrid_search(
+    query: str, top_k: int = 5, alpha: float = 0.6
+) -> List[Tuple[Document, float, str]]:
     bm25_results = bm25_search(query, top_k * 2)
     semantic_results = semantic_search(query, top_k * 2)
 
@@ -363,10 +412,15 @@ def hybrid_search(query: str, top_k: int = 5, alpha: float = 0.6) -> List[Tuple[
         min_score, max_score = min(scores), max(scores)
         if max_score == min_score:
             return [(doc, 0.5) for doc, _ in results]
-        return [(doc, (score - min_score) / (max_score - min_score)) for doc, score in results]
+        return [
+            (doc, (score - min_score) / (max_score - min_score))
+            for doc, score in results
+        ]
 
     norm_bm25 = normalize_scores(bm25_results)
-    norm_semantic = [(doc, 1 - score) for doc, score in normalize_scores(semantic_results)]
+    norm_semantic = [
+        (doc, 1 - score) for doc, score in normalize_scores(semantic_results)
+    ]
     doc_scores = {}
 
     for doc, score in norm_bm25:
@@ -393,7 +447,10 @@ def hybrid_search(query: str, top_k: int = 5, alpha: float = 0.6) -> List[Tuple[
 
     final_results = []
     for info in doc_scores.values():
-        hybrid_score = alpha * info["bm25_score"] + (1 - alpha) * info["semantic_score"]
+        hybrid_score = (
+            alpha * info["bm25_score"]
+            + (1 - alpha) * info["semantic_score"]
+        )
         methods_str = "+".join(info["methods"])
         final_results.append((info["doc"], hybrid_score, methods_str))
 
@@ -419,7 +476,7 @@ def _compute_source_hash(jsonl_path: str, md_path: str) -> str:
 def _get_saved_hash() -> str:
     try:
         if os.path.exists(FAISS_HASH_FILE):
-            with open(FAISS_HASH_FILE, "r") as f:
+            with open(FAISS_HASH_FILE) as f:
                 return f.read().strip()
     except Exception:
         pass
@@ -542,7 +599,10 @@ def initialize_rag_system():
 
     try:
         embedding_model = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+            model_name=(
+                "sentence-transformers/"
+                "paraphrase-multilingual-MiniLM-L12-v2"
+            )
         )
     except Exception as e:
         log_event(
@@ -563,25 +623,24 @@ def initialize_rag_system():
     try:
         current_hash = _compute_source_hash(jsonl_file_path, md_file_path)
         saved_hash = _get_saved_hash()
-        use_cache = (current_hash == saved_hash) and os.path.exists(FAISS_INDEX_DIR)
+        use_cache = current_hash == saved_hash and os.path.exists(FAISS_INDEX_DIR)
 
-        if use_cache:
-            if _try_load_faiss_index():
-                jsonl_data = load_jsonl_data(jsonl_file_path)
-                md_content = load_markdown_data(md_file_path)
-                documents = create_enhanced_documents(jsonl_data, md_content)
-                build_bm25_index()
-                _try_move_faiss_to_gpu()
-                log_event(
-                    "job_completed",
-                    "rag",
-                    status="success",
-                    duration_ms=elapsed_ms(started_at),
-                    job="rag_initialization",
-                    source="cache",
-                    document_count=len(documents),
-                )
-                return True
+        if use_cache and _try_load_faiss_index():
+            jsonl_data = load_jsonl_data(jsonl_file_path)
+            md_content = load_markdown_data(md_file_path)
+            documents = create_enhanced_documents(jsonl_data, md_content)
+            build_bm25_index()
+            _try_move_faiss_to_gpu()
+            log_event(
+                "job_completed",
+                "rag",
+                status="success",
+                duration_ms=elapsed_ms(started_at),
+                job="rag_initialization",
+                source="cache",
+                document_count=len(documents),
+            )
+            return True
 
         jsonl_data = load_jsonl_data(jsonl_file_path)
         md_content = load_markdown_data(md_file_path)

@@ -18,6 +18,7 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
+import asyncio
 import json
 from datetime import date, datetime, timedelta, timezone
 
@@ -47,6 +48,44 @@ def test_run_once_logs_no_events(monkeypatch, capsys):
     completed = json.loads(capsys.readouterr().err.splitlines()[-1])
     assert completed["status"] == "success"
     assert completed["event_count"] == 0
+
+
+def test_run_once_uses_one_asyncio_boundary(monkeypatch):
+    stub_result(monkeypatch, ReminderRunResult("no_events", (), 0))
+    real_run = reminder_runner.asyncio.run
+    coroutines = []
+
+    def counted_run(coroutine):
+        coroutines.append(coroutine)
+        return real_run(coroutine)
+
+    monkeypatch.setattr(reminder_runner.asyncio, "run", counted_run)
+
+    reminder_runner.run_once(target_date=TARGET_DATE)
+
+    assert len(coroutines) == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_entrypoint_rejects_running_loop_before_creating_coroutine(
+    monkeypatch,
+):
+    created = []
+
+    def create_run_once(*_args, **_kwargs):
+        created.append(True)
+
+        async def noop():
+            return None
+
+        return noop()
+
+    monkeypatch.setattr(reminder_runner, "_run_once", create_run_once)
+
+    with pytest.raises(RuntimeError, match="called from an async context"):
+        reminder_runner.run_once(target_date=TARGET_DATE)
+
+    assert created == []
 
 
 @pytest.mark.parametrize("stage", ["load_events", "load_members"])
@@ -106,6 +145,45 @@ def test_run_once_logs_completed_delivery(monkeypatch):
     assert "Events on 2026/07/12: Event 1, Event 2" in logs[0]
     assert "Discord: 1 sent, 0 failed" in logs[0]
     assert "LINE: 0 sent, 1 failed" in logs[0]
+
+
+@pytest.mark.asyncio
+async def test_daemon_continues_when_failure_notification_also_fails(monkeypatch):
+    runs = []
+    notifications = []
+
+    monkeypatch.setattr(
+        reminder_runner,
+        "seconds_until_next_run",
+        lambda **_kwargs: 0,
+    )
+
+    async def no_sleep(_seconds):
+        return None
+
+    async def fail_then_cancel(*_args, **_kwargs):
+        runs.append(True)
+        if len(runs) == 1:
+            raise RuntimeError("job failed")
+        raise asyncio.CancelledError
+
+    async def fail_to_notify(message):
+        notifications.append(message)
+        raise RuntimeError("notifier failed")
+
+    monkeypatch.setattr(reminder_runner.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr(reminder_runner, "_run_once", fail_then_cancel)
+    monkeypatch.setattr(
+        reminder_runner.operational_notifier,
+        "send_log",
+        fail_to_notify,
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await reminder_runner._daemon_loop()
+
+    assert len(runs) == 2
+    assert notifications == ["```\n[REMINDER] ERROR\n```"]
 
 
 def test_run_once_uses_taipei_tomorrow_when_date_is_omitted(monkeypatch):

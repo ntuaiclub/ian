@@ -10,19 +10,13 @@
   │ Gateway 層               │    │ MCP Tool Server           │
   │ ian.gateways             │◄──►│ ian.gateways             │
   │ - discord_bot            │    │ - mcp_server             │
-  │ - webhook_server         │    │ - Hybrid RAG             │
+  │ - webhook_server         │    │ - RagService             │
   │ - facebook_webhook       │    │                          │
   │ - line_webhook           │    │                          │
   │                          │    │ - 課程 / 通知 / 綁定工具 │
-  └────────────┬─────────────┘    └──────────────────────────┘
-               │                              ▲
-               │                    ┌──────────────────────────┐
-               │                    │ Member MCP               │
-               │                    │ ntuai.dev/api/mcp        │
-               │                    │ Users + Memberships      │
-               │                    │ Single Source of Truth   │
-               │                    └──────────────────────────┘
-           ▼
+  └────────────┬─────────────┘    └────────────┬─────────────┘
+               │                               ├──────────────┐
+               ▼                               ▼              ▼
   ┌──────────────────────────┐
   │ Agent Infrastructure     │
   │ ian.infrastructure.agent │
@@ -30,15 +24,20 @@
   │ - LangGraph ReAct        │
   │ - Gemini 3 Flash         │
   └──────────────────────────┘
+                               ┌──────────────────┐ ┌──────────────────┐
+                               │ Member MCP       │ │ RAG Infra        │
+                               │ Users / Members  │ │ BM25 / FAISS     │
+                               │ ntuai.dev        │ │ embeddings/cache │
+                               └──────────────────┘ └──────────────────┘
 ```
 
 ### 各層職責
 
 - **Domain 層**：`ian.domain` 保存 Event、Member 與純規則，不依賴環境設定或外部 SDK。
-- **Application 層**：`ian.application` 保存 Event、Member、提醒與社員通知 use cases，以及 application 所擁有的 repository／notification Protocol。
-- **Infrastructure 層**：`ian.infrastructure` 實作 Payload MCP repositories、Discord／Facebook／LINE notification adapters，以及完整的 LangGraph Agent adapter/runtime（prompt、callbacks、sessions、usage 與 Discord logging）。
-- **Services 層**：`ian.services` 暫留 Hybrid RAG 與 process runners；不包含 Agent/LangGraph 實作。
-- **Bootstrap**：`ian.bootstrap` 是 repositories、notification adapters、Agent adapter 與 application services 的唯一組裝點；組裝本身不執行網路 I/O、啟動 thread 或傳送通知。
+- **Application 層**：`ian.application` 保存 Event、Member、提醒、社員通知與 RAG use cases／DTO，以及 application 所擁有的 outbound Protocol。
+- **Infrastructure 層**：`ian.infrastructure` 實作 Payload MCP repositories、Discord／Facebook／LINE notification adapters、LangGraph Agent adapter/runtime，以及 Hybrid RAG 的 BM25／FAISS runtime。
+- **Services 層**：`ian.services` 只暫留 process runners 與 supervisor；不包含 application use case 或 concrete adapter。
+- **Bootstrap**：`ian.bootstrap` 是 repositories、notification adapters、Agent/RAG adapters 與 application services 的唯一組裝點；組裝本身不載入 RAG 模型、不執行網路 I/O、不啟動 thread，也不傳送通知。
 - **Gateway 層**：各平台入口。`ian.gateways.discord_bot` 處理 Discord Slash Commands；`ian.gateways.webhook_server` (Flask) 負責 Webhook route wiring，並委派給 `ian.gateways.facebook_webhook` 與 `ian.gateways.line_webhook` 處理 Facebook Messenger / LINE 平台細節。
 - **Host Agent Client**：`ian.application.agent.AgentService` 只依賴 `AgentPort`；`ian.infrastructure.agent.LangGraphAgentAdapter` 封裝 queue-based LangGraph runtime、Gemini、MCP tools 與 session lifecycle。
 - **MCP Tool Server**：`ian.gateways.mcp_server` 以 FastMCP 框架透過 streamable HTTP 提供 RAG 搜尋、課程查詢、幹部通知、社員綁定、簽到碼產生、訂閱管理、個性備註等工具。
@@ -52,15 +51,17 @@ ntuai-watson-agent/
 │   └── ian/
 │       ├── domain/         # 無 I/O 的 models 與純規則
 │       ├── application/    # use cases、DTO 與 outbound Protocols
-│       ├── infrastructure/ # Payload MCP、notification、完整 Agent/LangGraph runtime
+│       ├── infrastructure/ # Payload MCP、notification、Agent 與 RAG runtime
 │       ├── gateways/       # Discord、Webhook、FastMCP inbound adapters
-│       ├── services/       # 暫留 RAG 與 process runners
+│       ├── services/       # 暫留 process runners 與 supervisor
 │       ├── bootstrap.py    # 唯一 dependency composition root
 │       ├── config.py       # 環境變數與檔案路徑設定
 │       └── cli.py          # Typer CLI：`ian ...`
 ├── tests/
 │   ├── domain/             # 純邏輯 pytest 覆蓋
-│   ├── services/           # service 邊界 pytest 覆蓋
+│   ├── application/        # use case 與 port 邊界 pytest 覆蓋
+│   ├── infrastructure/     # concrete adapter pytest 覆蓋
+│   ├── services/           # process runner pytest 覆蓋
 │   ├── agent/              # Agent runtime placeholder（目前 intentionally skipped）
 │   └── integration/        # MCP/LLM/平台整合測試 placeholder（目前 intentionally skipped）
 ├── Dockerfile              # NVIDIA CUDA 12.1 + Python 3.11 映像
@@ -89,10 +90,10 @@ Discord / Facebook / LINE / FastMCP / CLI
               ^
               |
           ian.infrastructure
-        /           |             \
-   payload_mcp   notifications      agent
-      |                              |
- ntuai.dev MCP                  LangGraph / Gemini
+        /          |          |          \
+      payload_mcp notifications  agent       rag
+        |                     |           |
+      ntuai.dev MCP       LangGraph/Gemini  BM25/FAISS
 
 ian.bootstrap 是 application ports 與 concrete adapters 的唯一組裝點。
 ```
@@ -121,8 +122,10 @@ ian.bootstrap 是 application ports 與 concrete adapters 的唯一組裝點。
 | `update_subscribe` | 更新每日課程通知訂閱設定（discord、fb、line） | `platform`, `account_id`, `subscribe` |
 | `update_personal_prompt` | 記錄使用者溝通風格與偏好（最多 100 字） | `platform`, `account_id`, `personal_prompt` |
 
-**Hybrid RAG 系統**：
+**Hybrid RAG 系統（`ian.application.rag` + `ian.infrastructure.rag`）**：
 
+- MCP gateway 只依賴 `RagService` 與 technology-neutral `RagSearchResult`，不接觸 LangChain `Document`。
+- `HybridRagAdapter` 實作 application-owned `RagSearchPort`，並以 lazy import 延後載入模型、LangChain 與 FAISS runtime。
 - 結合 **BM25** 關鍵字搜尋（jieba 中文分詞）與 **FAISS** 語意向量搜尋（`paraphrase-multilingual-MiniLM-L12-v2`），加權混合排序後回傳結果。
 - 支援 FAISS 索引快取（基於來源文件 hash 自動重建）與 GPU 加速。
 

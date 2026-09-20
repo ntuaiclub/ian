@@ -29,12 +29,62 @@ from ian.application.member_notifications import (
     EventNotificationResult,
 )
 from ian.application.notifications import DeliveryReport
+from ian.application.rag import RagSearchResult
 from ian.domain.events import Event
 from ian.gateways import mcp_server
 
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def test_initialize_dependencies_delegates_to_rag_service(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        mcp_server.rag_service,
+        "initialize",
+        lambda: calls.append(True) or True,
+    )
+
+    mcp_server.initialize_dependencies()
+
+    assert calls == [True]
+
+
+def test_qa_retriever_reports_uninitialized_rag(monkeypatch):
+    monkeypatch.setattr(mcp_server.rag_service, "is_initialized", lambda: False)
+
+    result = _run(mcp_server.search_qa_chunks_by_semantics("社課時間"))
+
+    assert result == "錯誤：RAG 系統未初始化，請檢查資料檔案是否存在"
+
+
+def test_qa_retriever_formats_application_results(monkeypatch):
+    monkeypatch.setattr(mcp_server.rag_service, "is_initialized", lambda: True)
+
+    async def search(query, top_k):
+        assert (query, top_k) == ("社課時間", 3)
+        return [
+            RagSearchResult(
+                content="問題：社課時間？\n答案：星期四",
+                score=0.8,
+                methods="BM25+Semantic",
+                source="faq",
+                content_type="faq",
+                tags=("社課", "時間"),
+            )
+        ]
+
+    monkeypatch.setattr(mcp_server.rag_service, "search", search)
+
+    result = _run(mcp_server.search_qa_chunks_by_semantics("社課時間", top_k=3))
+
+    assert "相關度: 0.800" in result
+    assert "搜尋方法: BM25+Semantic" in result
+    assert "問題：社課時間？" in result
+    assert "來源：faq" in result
+    assert "類型：FAQ" in result
+    assert "標籤：社課, 時間" in result
 
 
 @pytest.mark.parametrize(
