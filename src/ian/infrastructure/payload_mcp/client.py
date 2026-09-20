@@ -62,9 +62,13 @@ class StreamableHttpMcpToolCaller:
 
     def _require_config(self) -> None:
         if not self.url or not self.api_key:
-            raise PayloadMcpConfigurationError("NTUAI_MCP_URL or NTUAI_MCP_API_KEY is not configured")
+            raise PayloadMcpConfigurationError(
+                "NTUAI_MCP_URL or NTUAI_MCP_API_KEY is not configured"
+            )
         if self.timeout_seconds <= 0:
-            raise PayloadMcpConfigurationError("NTUAI_MCP_TIMEOUT_SECONDS must be positive")
+            raise PayloadMcpConfigurationError(
+                "NTUAI_MCP_TIMEOUT_SECONDS must be positive"
+            )
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
         self._require_config()
@@ -90,7 +94,9 @@ class StreamableHttpMcpToolCaller:
                         result = await session.call_tool(
                             name,
                             arguments,
-                            read_timeout_seconds=timedelta(seconds=self.timeout_seconds),
+                            read_timeout_seconds=timedelta(
+                                seconds=self.timeout_seconds
+                            ),
                         )
         except PayloadMcpError:
             raise

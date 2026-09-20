@@ -25,10 +25,11 @@ from enum import IntEnum, StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ian.config import TZ_TPE
+from ian.domain.time import TZ_TPE
 
 
 _VALID_SUBSCRIBE_PLATFORMS = {"discord", "fb", "line"}
+_STAFF_ROLES = {"admin", "check-in-staff"}
 PERSONAL_PROMPT_MAX_LEN = 100
 
 
@@ -126,12 +127,13 @@ class Membership(BaseModel):
 
 
 class User(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     id: int
     name: str
     email: str
     emailVerified: bool
+    roles: list[str] = Field(default_factory=list, alias="role")
     discord_acc_id: str | None = None
     fb_acc_id: str | None = None
     line_acc_id: str | None = None
@@ -165,6 +167,9 @@ class User(BaseModel):
         if self.subscribe is None:
             return None
         return Platform(self.subscribe)
+
+    def is_staff(self) -> bool:
+        return bool(_STAFF_ROLES.intersection(self.roles))
 
 
 def normalize_email(email: str) -> str:

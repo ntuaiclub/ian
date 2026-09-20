@@ -48,7 +48,12 @@ def test_build_serve_commands_uses_cli_subcommands_in_startup_order():
     commands = build_serve_commands(mcp_port=6001)
 
     assert commands == [
-        ["ian", "mcp", "--http", "--port", "6001"],
+        [
+            "ian",
+            "mcp",
+            "--port",
+            "6001",
+        ],
         ["ian", "webhook"],
         ["ian", "reminder", "--daemon"],
         ["ian", "discord"],
@@ -83,11 +88,23 @@ def test_serve_all_waits_for_mcp_before_starting_other_services(capsys):
         {
             "url": "http://localhost:6001/health",
             "timeout_seconds": 10,
-            "started": [["ian", "mcp", "--http", "--port", "6001"]],
+            "started": [
+                [
+                    "ian",
+                    "mcp",
+                    "--port",
+                    "6001",
+                ]
+            ],
         }
     ]
     assert started == [
-        ["ian", "mcp", "--http", "--port", "6001"],
+        [
+            "ian",
+            "mcp",
+            "--port",
+            "6001",
+        ],
         ["ian", "webhook"],
         ["ian", "reminder", "--daemon"],
         ["ian", "discord"],

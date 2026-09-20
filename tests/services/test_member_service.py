@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from ian.domain.members import MemberDataError, Membership, Platform, User
-from ian.services.member_service import MemberService
+from ian.application.members import MemberService
 
 
 NOW = datetime(2026, 7, 18, 12, tzinfo=timezone.utc)
@@ -102,6 +102,15 @@ async def test_get_member_role_uses_effective_tier():
 
     assert await service.get_member_role("Discord", "discord-10", NOW) == "專案實作"
     assert await service.get_member_role("Discord", "missing", NOW) == "非社員"
+
+
+@pytest.mark.asyncio
+async def test_is_staff_uses_repository_user_roles():
+    staff = make_user().model_copy(update={"roles": ["admin"]})
+    service = MemberService(FakeRepository([staff]))
+
+    assert await service.is_staff("Discord", "discord-10") is True
+    assert await service.is_staff("Discord", "missing") is False
 
 
 @pytest.mark.asyncio

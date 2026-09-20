@@ -23,7 +23,7 @@ from datetime import date, datetime, timedelta, timezone
 import pytest
 
 from ian.domain.events import Event
-from ian.services.event_service import EventService
+from ian.application.events import EventService
 
 
 TPE = timezone(timedelta(hours=8))

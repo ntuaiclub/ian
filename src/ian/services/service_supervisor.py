@@ -32,7 +32,12 @@ Command = list[str]
 
 def build_serve_commands(mcp_port: int = 5191) -> list[Command]:
     return [
-        ["ian", "mcp", "--http", "--port", str(mcp_port)],
+        [
+            "ian",
+            "mcp",
+            "--port",
+            str(mcp_port),
+        ],
         ["ian", "webhook"],
         ["ian", "reminder", "--daemon"],
         ["ian", "discord"],

@@ -103,17 +103,19 @@ def test_webhook_status_reports_enabled_platforms():
         response = client.get("/status")
 
         assert response.status_code == 200
-        assert response.json["platforms"] == ["LINE"]
+        payload = response.get_json()
+        assert payload is not None
+        assert payload["platforms"] == ["LINE"]
     finally:
         webhook_server.configure_platforms("all")
 
 
-def test_entrypoint_initializes_dependencies_before_starting_server(monkeypatch):
+def test_webhook_runner_configures_platform_before_starting_server(monkeypatch):
     calls = []
     monkeypatch.setattr(
         webhook_server,
-        "initialize_dependencies",
-        lambda: calls.append(("initialize",)),
+        "configure_platforms",
+        lambda platform: calls.append(("configure", platform)) or {"LINE"},
     )
     monkeypatch.setattr(
         webhook_server.app,
@@ -121,13 +123,12 @@ def test_entrypoint_initializes_dependencies_before_starting_server(monkeypatch)
         lambda **kwargs: calls.append(("run", kwargs)),
     )
 
-    webhook_server.entrypoint("line")
+    webhook_server.run_webhook_server("line")
 
     assert calls == [
-        ("initialize",),
+        ("configure", "line"),
         ("run", {"host": "0.0.0.0", "port": 5190, "debug": False}),
     ]
-    webhook_server.configure_platforms("all")
 
 
 @pytest.mark.parametrize(

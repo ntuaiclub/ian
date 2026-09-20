@@ -25,7 +25,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from ian.domain.events import Event
-from ian.services.payload_mcp_client import (
+from ian.infrastructure.payload_mcp.client import (
     McpToolCaller,
     PayloadMcpConfigurationError,
     PayloadMcpSchemaError,
@@ -72,8 +72,8 @@ class EventSchemaError(EventRepositoryError):
     """Raised when an Event MCP document violates the contract."""
 
 
-class EventMcpRepository:
-    """Typed, read-only repository over the ntuai.dev Events collection."""
+class PayloadMcpEventRepository:
+    """Typed, read-only adapter over the ntuai.dev Events collection."""
 
     def __init__(self, caller: McpToolCaller):
         self.caller = caller
@@ -126,10 +126,15 @@ class EventMcpRepository:
             "limit": 1,
             "page": 1,
         }
-        events = self._parse_events(await self._call_documents(arguments))
+        documents = await self._call_documents(arguments)
+        events = self._parse_events(documents)
+        if documents and not events:
+            raise EventSchemaError("MCP Event response violates the schema")
         published = [event for event in events if event.status == "published"]
         if len(published) > 1:
             raise EventSchemaError("findEvents returned multiple documents for one id")
+        if published and published[0].id != event_id:
+            raise EventSchemaError("findEvents returned a mismatched Event id")
         return published[0] if published else None
 
     async def list_published(
@@ -141,7 +146,9 @@ class EventMcpRepository:
         where: dict[str, Any] = {"_status": {"equals": "published"}}
         if starts_at_or_after is not None:
             where["startDate"] = {
-                "greater_than_equal": starts_at_or_after.astimezone(timezone.utc).isoformat()
+                "greater_than_equal": starts_at_or_after.astimezone(
+                    timezone.utc
+                ).isoformat()
             }
         if starts_before is not None:
             where.setdefault("startDate", {})["less_than"] = starts_before.astimezone(
@@ -158,8 +165,9 @@ class EventMcpRepository:
                 "limit": limit,
                 "page": page,
             }
-            batch = self._parse_events(await self._call_documents(arguments))
+            documents = await self._call_documents(arguments)
+            batch = self._parse_events(documents)
             events.extend(batch)
-            if len(batch) < limit:
+            if len(documents) < limit:
                 return sorted(events, key=lambda event: (event.startDate, event.id))
             page += 1

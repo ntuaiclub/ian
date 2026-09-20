@@ -34,10 +34,14 @@
 
 ### 各層職責
 
+- **Domain 層**：`ian.domain` 保存 Event、Member 與純規則，不依賴環境設定或外部 SDK。
+- **Application 層**：`ian.application` 保存 Event、Member、提醒與社員通知 use cases，以及 application 所擁有的 repository／notification Protocol。
+- **Infrastructure 層**：`ian.infrastructure.payload_mcp` 實作 Payload MCP transport 與 Event／Member repository adapters。
+- **Bootstrap**：`ian.bootstrap` 是 concrete repositories、application services 與 notification sender 的唯一組裝點；組裝本身不執行網路 I/O。
 - **Gateway 層**：各平台入口。`ian.gateways.discord_bot` 處理 Discord Slash Commands；`ian.gateways.webhook_server` (Flask) 負責 Webhook route wiring，並委派給 `ian.gateways.facebook_webhook` 與 `ian.gateways.line_webhook` 處理 Facebook Messenger / LINE 平台細節。
 - **Host Agent Client**：`ian.services.agent` 使用 LangGraph `create_react_agent` 搭配 Google Gemini 3 Flash，透過 MCP 協定調用工具，並管理每位使用者的獨立對話 session。
 - **MCP Tool Server**：`ian.gateways.mcp_server` 以 FastMCP 框架透過 streamable HTTP 提供 RAG 搜尋、課程查詢、幹部通知、社員綁定、簽到碼產生、訂閱管理、個性備註等工具。
-- **Member MCP**：`ian.services.member_service` 與 `member_mcp_repository` 透過 `ntuai.dev/api/mcp` 直接讀寫 Users 與 Memberships；遠端網站是社員資料唯一來源，不使用本地社員快取。
+- **Payload MCP**：application 的 repository Protocol 由 `ian.infrastructure.payload_mcp` adapters 實作，透過 `ntuai.dev/api/mcp` 存取 Events、Users 與 Memberships；遠端網站是唯一來源。
 
 ## 專案結構
 
@@ -45,10 +49,13 @@
 ntuai-watson-agent/
 ├── src/
 │   └── ian/
-│       ├── config.py       # 共用環境變數、路徑與時區設定
-│       ├── domain/         # 無 I/O 的純邏輯：injection、URL、member、course、reminder
-│       ├── services/       # 有狀態或 I/O 的服務邊界
-│       ├── gateways/       # Discord、Webhook、MCP 平台 adapter
+│       ├── domain/         # 無 I/O 的 models 與純規則
+│       ├── application/    # use cases、DTO 與 outbound Protocols
+│       ├── infrastructure/ # Payload MCP concrete adapters
+│       ├── gateways/       # Discord、Webhook、FastMCP inbound adapters
+│       ├── services/       # 暫留 Agent、RAG、notification adapter 與 runners
+│       ├── bootstrap.py    # 唯一 dependency composition root
+│       ├── config.py       # 環境變數與檔案路徑設定
 │       └── cli.py          # Typer CLI：`ian ...`
 ├── tests/
 │   ├── domain/             # 純邏輯 pytest 覆蓋
@@ -63,35 +70,25 @@ ntuai-watson-agent/
 ├── pyproject.toml          # Python 專案 metadata 與依賴群組
 ├── uv.lock                 # 可重現安裝的依賴 lockfile
 ├── .env.example            # 環境變數範本
-└── data/
-    ├── ntuai_zh_base.md                # Markdown 知識庫文件（RAG 資料來源）
-    └── ntuai_recompiled_index.jsonl    # QA 知識庫（JSONL 格式）
+```text
+Discord / Facebook / LINE / FastMCP / CLI
+              |
+              v
+          ian.gateways
+              |
+              v
+         ian.application  --->  ian.domain
+              ^
+              |
+      ian.infrastructure.payload_mcp
+              |
+              v
+     ntuai.dev Payload MCP (Events / Users / Memberships)
+
+ian.bootstrap 是 application 與 infrastructure 的唯一組裝點。
+Agent runtime 與 RAG 暫留 ian.services，作為後續獨立重構範圍。
 ```
-
-## 核心元件
-
-### Host Agent Client (`ian.services.agent`)
-
-- 使用 **LangGraph** `create_react_agent` 搭配 **Google Gemini 3 Flash** (`gemini-3-flash-preview`) 建立 ReAct 推理迴圈。
-- 每位使用者擁有獨立 session（含 `MemorySaver` 對話記憶），閒置 15 分鐘自動過期。
-- 透過 **MCP streamable-http** 連接 MCP Server 取得工具。
-- 內建 **每日用量限制**（每位使用者 10 次 / 日，UTC+8 午夜重置）。
-- 整合 **Prompt Injection 偵測**，攔截惡意輸入。
-- **URL 驗證**：從 system prompt 與工具結果中提取合法 URL，攔截 LLM 幻覺連結。
-- 所有互動記錄（使用者訊息、工具呼叫、工具結果、Agent 回應、錯誤、Session 事件）即時推送至 **Discord Log Channel**。
-- 支援 `[NO_RESPONSE]` 機制，Agent 可選擇不回應（搭配可選 emoji reaction）。
-- 啟動時自動發送系統通知至 Discord Log Channel。
-
-### MCP Tool Server (`ian.gateways.mcp_server`)
-
-基於 **FastMCP** 框架，透過 streamable-http 傳輸提供以下工具：
-
-| 工具名稱 | 功能 | 參數 |
-|----------|------|------|
-| `event_retriever` | 依 Membership tier 搜尋可見活動 | `platform`, `account_id`, `query` |
-| `qa_retreviler` | 社團 FAQ 混合搜尋 (BM25 + Semantic) | `query`, `top_k` |
-| `notify_staff` | 幹部通知（透過 Discord 頻道） | `message`, `user_name`, `platform`, `context` |
-| `notify_members` | 幹部依每位社員選定的平台發送通知 | `role`, `event_id`, `note`, `custom_message` |
+| `notify_members` | 幹部依每位社員選定的平台發送通知 | `platform`, `account_id`, `event_id`, `note`, `custom_message` |
 | `generate_checkin_code` | 產生使用者專屬的活動簽到碼連結 | `platform`, `account_id`, `name`, `email` |
 | `bind_email` | 透過 Email 綁定社員身分 | `email`, `platform`, `account_id` |
 | `update_subscribe` | 更新每日課程通知訂閱設定（discord、fb、line） | `platform`, `account_id`, `subscribe` |
@@ -105,12 +102,12 @@ ntuai-watson-agent/
 **活動資料**：
 
 - Events 只透過 ntuai.dev Payload MCP 的 `findEvents` 讀取，不使用本地 CSV 或 stale cache。
-- `EventMcpRepository` 固定使用公開欄位 allowlist，排除 `checkIns` 等非顯示資料。
+- `PayloadMcpEventRepository` 固定使用公開欄位 allowlist，排除 `checkIns` 等非顯示資料。
 - `EventService` 依 Event `minimumTier` 與使用者有效 Membership tier 控制查詢與通知資格。
 
 **社員通知（`notify_members`）**：
 
-- 僅限幹部使用（硬邏輯檢查角色是否包含「社長」、「部長」、「部員」）。
+- 僅限 ntuai.dev Users `role` 為 `admin` 或 `check-in-staff` 的已綁定使用者。
 - **活動通知模式**：以 Event ID 精確選擇 published Event，依 `minimumTier` 過濾收件者後發送。
 - **自訂通知模式**：直接提供自訂訊息內容，不需選擇活動。
 - 未指定活動時，自動列出即將舉辦的 3 場活動供選擇。
@@ -125,7 +122,7 @@ ntuai-watson-agent/
 - 支援 `--daemon` 模式（容器內常駐）、`--dry` 模擬執行、`--date` 指定日期檢查。
 - 發送結果記錄至 Discord Log Channel。
 
-### Member MCP (`ian.services.member_service`)
+### Member Application (`ian.application.members`)
 
 - `ntuai.dev` 的 Users 與 Memberships 是社員資料唯一來源；不匯入、不讀取本地舊資料。
 - 支援依 Discord、Facebook、LINE account ID 或已驗證 Email 查詢與綁定。

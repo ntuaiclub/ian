@@ -21,17 +21,15 @@
 import json
 from collections import defaultdict
 from typing import Any
+
 from pydantic import ValidationError
 
 from ian.domain.members import Membership, Platform, User
-from ian.services.payload_mcp_client import (
+from ian.infrastructure.payload_mcp.client import (
     McpToolCaller,
     PayloadMcpError,
-    PayloadMcpConfigurationError,
     PayloadMcpSchemaError,
-    PayloadMcpToolError,
     PayloadMcpTransportError,
-    StreamableHttpMcpToolCaller as SharedStreamableHttpMcpToolCaller,
     parse_payload_documents,
 )
 
@@ -41,6 +39,7 @@ USER_SELECT = {
     "name": True,
     "email": True,
     "emailVerified": True,
+    "role": True,
     "discord_acc_id": True,
     "fb_acc_id": True,
     "line_acc_id": True,
@@ -63,22 +62,24 @@ UPDATABLE_USER_FIELDS = {
 }
 
 
-MemberRepositoryError = PayloadMcpError
-MemberConfigurationError = PayloadMcpConfigurationError
-MemberTransportError = PayloadMcpTransportError
-MemberToolError = PayloadMcpToolError
-MemberSchemaError = PayloadMcpSchemaError
-StreamableHttpMcpToolCaller = SharedStreamableHttpMcpToolCaller
+class MemberRepositoryError(PayloadMcpError):
+    """Base error for the remote Member repository."""
+
+
+class MemberSchemaError(MemberRepositoryError):
+    """Raised when a Member MCP document violates the contract."""
+
+
+class MemberTransportError(MemberRepositoryError):
+    """Raised when Member MCP transport fails."""
 
 
 class DuplicateMemberError(MemberRepositoryError):
     """Raised when a supposedly unique member lookup returns multiple users."""
 
 
-
-
-class MemberMcpRepository:
-    """Typed repository over the ntuai.dev Payload MCP tools."""
+class PayloadMcpMemberRepository:
+    """Typed adapter over the ntuai.dev Users and Memberships collections."""
 
     def __init__(self, caller: McpToolCaller):
         self.caller = caller
@@ -88,8 +89,17 @@ class MemberMcpRepository:
         tool_name: str,
         arguments: dict[str, Any],
     ) -> list[dict[str, Any]]:
-        text = await self.caller.call_tool(tool_name, arguments)
-        return parse_payload_documents(text)
+        try:
+            text = await self.caller.call_tool(tool_name, arguments)
+            return parse_payload_documents(text)
+        except MemberRepositoryError:
+            raise
+        except PayloadMcpTransportError as error:
+            raise MemberTransportError(str(error)) from error
+        except PayloadMcpSchemaError as error:
+            raise MemberSchemaError(str(error)) from error
+        except PayloadMcpError as error:
+            raise MemberRepositoryError(str(error)) from error
 
     @staticmethod
     def _parse_users(documents: list[dict[str, Any]]) -> list[User]:

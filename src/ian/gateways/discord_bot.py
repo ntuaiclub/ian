@@ -25,6 +25,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
+from ian.bootstrap import get_application
 from ian.config import DISCORD_BOT_TOKEN
 from ian.gateways.agent_bridge import run_agent_message_flow
 from ian.gateways.messaging_common import get_current_time
@@ -33,11 +34,11 @@ from ian.services.agent import (
     send_startup_notification,
     clear_session,
 )
-from ian.services.member_service import member_service
 from ian.utils.logging import elapsed_ms, hash_identifier, log_event
 
 UPLOAD_DIR = "uploads"
 CHAT_HISTORY_FILE = os.path.join(UPLOAD_DIR, "chat_history.jsonl")
+member_service = get_application().members
 
 
 def _interaction_correlation_id(interaction: discord.Interaction) -> str:
@@ -336,7 +337,7 @@ async def clear(interaction: discord.Interaction):
         )
 
 
-def entrypoint():
+def run_discord_bot() -> None:
     if not DISCORD_BOT_TOKEN:
         log_event(
             "job_failed",

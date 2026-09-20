@@ -29,7 +29,7 @@ from collections.abc import Callable, Mapping
 from datetime import datetime
 from typing import Any, TextIO
 
-from ian.config import TZ_TPE
+from ian.domain.time import TZ_TPE
 
 
 LOG_LEVELS = frozenset({"debug", "info", "warning", "error", "critical"})

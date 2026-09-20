@@ -21,10 +21,8 @@
 from datetime import date, datetime, time, timedelta
 from typing import Protocol
 
-from ian.config import TZ_TPE
 from ian.domain.events import Event, lexical_to_text
-from ian.services.event_mcp_repository import EventMcpRepository
-from ian.services.payload_mcp_client import StreamableHttpMcpToolCaller
+from ian.domain.time import TZ_TPE
 
 
 class EventRepository(Protocol):
@@ -79,7 +77,8 @@ class EventService:
         return [
             event
             for event in events
-            if self.can_access(event, viewer_tier) and normalized in self._searchable_text(event)
+            if self.can_access(event, viewer_tier)
+            and normalized in self._searchable_text(event)
         ]
 
     @staticmethod
@@ -101,7 +100,10 @@ class EventService:
         local_start = event.startDate.astimezone(TZ_TPE)
         local_end = event.endDate.astimezone(TZ_TPE)
         weekdays = ("週一", "週二", "週三", "週四", "週五", "週六", "週日")
-        lines = [event.title, f"日期：{local_start:%Y-%m-%d} {weekdays[local_start.weekday()]}"]
+        lines = [
+            event.title,
+            f"日期：{local_start:%Y-%m-%d} {weekdays[local_start.weekday()]}",
+        ]
         lines.append(f"時間：{local_start:%H:%M} - {local_end:%H:%M}")
         fields = (
             ("地點", event.location),
@@ -122,7 +124,9 @@ class EventService:
             lines.append(f"非社員費用：{event.nonMemberFee}")
         if event.onlineURL:
             lines.append(f"線上連結：{event.onlineURL}")
-        lines.extend(f"講義：{material.label} {material.url}" for material in event.materials)
+        lines.extend(
+            f"講義：{material.label} {material.url}" for material in event.materials
+        )
         if event.videoURL:
             lines.append(f"錄影：{event.videoURL}")
         lines.extend(f"照片：{media.url}" for media in event.eventMedia)
@@ -133,21 +137,3 @@ class EventService:
     @classmethod
     def format_events(cls, events: list[Event]) -> str:
         return "\n\n".join(cls.format_event(event) for event in events)
-
-
-def create_event_service() -> EventService:
-    from ian.config import (
-        NTUAI_MCP_API_KEY,
-        NTUAI_MCP_TIMEOUT_SECONDS,
-        NTUAI_MCP_URL,
-    )
-
-    return EventService(
-        EventMcpRepository(
-            StreamableHttpMcpToolCaller(
-                NTUAI_MCP_URL,
-                NTUAI_MCP_API_KEY,
-                NTUAI_MCP_TIMEOUT_SECONDS,
-            )
-        )
-    )

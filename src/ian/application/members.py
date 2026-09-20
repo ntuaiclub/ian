@@ -22,11 +22,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol
 
-from ian.config import (
-    NTUAI_MCP_API_KEY,
-    NTUAI_MCP_TIMEOUT_SECONDS,
-    NTUAI_MCP_URL,
-)
 from ian.domain.members import (
     MemberDataError,
     MemberTier,
@@ -35,10 +30,6 @@ from ian.domain.members import (
     normalize_email,
     normalize_personal_prompt,
     normalize_subscribe,
-)
-from ian.services.member_mcp_repository import (
-    MemberMcpRepository,
-    StreamableHttpMcpToolCaller,
 )
 
 
@@ -122,6 +113,14 @@ class MemberService:
             return user.effective_tier(now) if user else MemberTier.NON_MEMBER
         except Exception:
             return MemberTier.NON_MEMBER
+
+    async def is_staff(
+        self,
+        platform: str | Platform,
+        account_id: str,
+    ) -> bool:
+        user = await self.find_user_by_platform(platform, account_id)
+        return user.is_staff() if user else False
 
     async def bind_user_platform(
         self,
@@ -212,10 +211,7 @@ class MemberService:
             return OperationResult(False, "訂閱更新後驗證失敗，請稍後再試。")
         if normalized is None:
             return OperationResult(True, "已取消所有通知訂閱。")
-        return OperationResult(
-            True,
-            f"訂閱設定已更新：{normalized}",
-        )
+        return OperationResult(True, f"訂閱設定已更新：{normalized}")
 
     async def update_personal_prompt(
         self,
@@ -265,15 +261,3 @@ class MemberService:
                 )
             )
         return recipients
-
-
-def create_member_service() -> MemberService:
-    caller = StreamableHttpMcpToolCaller(
-        NTUAI_MCP_URL,
-        NTUAI_MCP_API_KEY,
-        NTUAI_MCP_TIMEOUT_SECONDS,
-    )
-    return MemberService(MemberMcpRepository(caller))
-
-
-member_service = create_member_service()

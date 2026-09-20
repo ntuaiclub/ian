@@ -19,7 +19,6 @@
 #
 
 import os
-from datetime import timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -27,8 +26,6 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(PROJECT_ROOT / ".env")
-
-TZ_TPE = timezone(timedelta(hours=8))
 
 def _env(name: str, default: str = "") -> str:
     return os.environ.get(name) or default

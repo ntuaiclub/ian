@@ -159,6 +159,21 @@ def test_user_without_subscription_has_no_subscribed_platform():
     assert user().subscribed_platform() is None
 
 
+@pytest.mark.parametrize(
+    ("roles", "expected"),
+    [
+        (["user"], False),
+        (["admin"], True),
+        (["check-in-staff"], True),
+        (["user", "admin"], True),
+    ],
+)
+def test_user_staff_status_uses_payload_roles(roles, expected):
+    member = user().model_copy(update={"roles": roles})
+
+    assert member.is_staff() is expected
+
+
 def test_normalize_email_lowercases_complete_address():
     assert normalize_email(" USER.Name@Example.COM ") == "user.name@example.com"
 

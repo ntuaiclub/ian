@@ -24,9 +24,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from ian.services.event_mcp_repository import (
+from ian.infrastructure.payload_mcp.event_repository import (
     EVENT_SELECT,
-    EventMcpRepository,
+    EventSchemaError,
+    PayloadMcpEventRepository,
 )
 
 
@@ -66,7 +67,7 @@ class QueueCaller:
 async def test_find_by_id_uses_event_allowlist_and_published_filter():
     caller = QueueCaller(mcp_text(event_document(42)))
 
-    event = await EventMcpRepository(caller).find_by_id(42)
+    event = await PayloadMcpEventRepository(caller).find_by_id(42)
 
     assert event is not None
     assert event.id == 42
@@ -86,7 +87,7 @@ async def test_list_published_applies_utc_date_bounds_and_sorts_results():
             event_document(1, startDate="2026-08-01T19:00:00+08:00"),
         )
     )
-    repository = EventMcpRepository(caller)
+    repository = PayloadMcpEventRepository(caller)
 
     events = await repository.list_published(
         starts_at_or_after=datetime(2026, 8, 1, tzinfo=TPE),
@@ -107,10 +108,38 @@ async def test_list_published_fetches_following_page_after_full_page():
     first_page = [event_document(index) for index in range(1, 101)]
     caller = QueueCaller(mcp_text(*first_page), mcp_text(event_document(101)))
 
-    events = await EventMcpRepository(caller).list_published()
+    events = await PayloadMcpEventRepository(caller).list_published()
 
     assert len(events) == 101
     assert [arguments["page"] for _, arguments in caller.calls] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_full_raw_page_with_invalid_document_still_fetches_next_page():
+    first_page = [event_document(index) for index in range(1, 101)]
+    first_page[0]["title"] = " "
+    caller = QueueCaller(mcp_text(*first_page), mcp_text(event_document(101)))
+
+    events = await PayloadMcpEventRepository(caller).list_published()
+
+    assert len(events) == 100
+    assert [arguments["page"] for _, arguments in caller.calls] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_find_by_id_distinguishes_invalid_document_from_not_found():
+    caller = QueueCaller(mcp_text(event_document(42, title=" ")))
+
+    with pytest.raises(EventSchemaError):
+        await PayloadMcpEventRepository(caller).find_by_id(42)
+
+
+@pytest.mark.asyncio
+async def test_find_by_id_rejects_mismatched_document_id():
+    caller = QueueCaller(mcp_text(event_document(99)))
+
+    with pytest.raises(EventSchemaError):
+        await PayloadMcpEventRepository(caller).find_by_id(42)
 
 
 @pytest.mark.asyncio
@@ -119,6 +148,6 @@ async def test_repository_skips_invalid_documents_and_keeps_valid_events():
         mcp_text(event_document(1, title=" "), event_document(2))
     )
 
-    events = await EventMcpRepository(caller).list_published()
+    events = await PayloadMcpEventRepository(caller).list_published()
 
     assert [event.id for event in events] == [2]

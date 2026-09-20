@@ -24,75 +24,8 @@ from types import SimpleNamespace
 import pytest
 
 from ian.services import notifications
+from ian.application.members import ReminderRecipient
 from ian.domain.members import MemberTier, Platform
-from ian.services.member_service import ReminderRecipient
-
-
-@pytest.mark.parametrize(
-    ("role", "expected"),
-    [
-        pytest.param("技術部部員", True, id="department-member"),
-        pytest.param("社長", True, id="president"),
-        pytest.param("一般社員", False, id="regular-member"),
-        pytest.param("", False, id="empty-role"),
-    ],
-)
-def test_is_staff_role_matches_staff_keywords(role, expected):
-    assert notifications.is_staff_role(role) is expected
-
-
-@pytest.mark.parametrize(
-    ("delivery_results", "expected"),
-    [
-        pytest.param([], (0, 0), id="no-recipients"),
-        pytest.param([True, True], (2, 0), id="all-success"),
-        pytest.param([True, False, False], (1, 2), id="mixed-results"),
-    ],
-)
-def test_send_notification_to_members_aggregates_delivery_results(
-    monkeypatch, delivery_results, expected
-):
-    recipients = [
-        ReminderRecipient(
-            user_id=index,
-            name=f"Member {index}",
-            email=f"member-{index}@example.test",
-            platform=Platform.DISCORD,
-            account_id=f"discord-{index}",
-            tier=MemberTier.LECTURE_EXPLORATION,
-        )
-        for index, _result in enumerate(delivery_results, 1)
-    ]
-    dm_calls = []
-    sleep_calls = []
-    results = iter(delivery_results)
-
-    monkeypatch.setattr(
-        notifications,
-        "send_notification",
-        lambda recipient, message: (
-            dm_calls.append((recipient.account_id, message)) or next(results)
-        ),
-    )
-    monkeypatch.setattr(notifications.time, "sleep", sleep_calls.append)
-
-    result = notifications.send_notification_to_members("Notice", recipients)
-
-    discord_ok, discord_fail = expected
-    assert result == {
-        "total_members": len(recipients),
-        "total_recipients": len(recipients),
-        "discord_ok": discord_ok,
-        "discord_fail": discord_fail,
-        "fb_ok": 0,
-        "fb_fail": 0,
-        "line_ok": 0,
-        "line_fail": 0,
-    }
-    assert dm_calls == [
-        (f"discord-{index}", "Notice") for index in range(1, len(delivery_results) + 1)
-    ]
-    assert sleep_calls == [0.5] * len(delivery_results)
 
 
 @pytest.mark.parametrize(
@@ -121,6 +54,48 @@ def test_send_notification_dispatches_by_platform(monkeypatch, platform, sender_
 
     assert notifications.send_notification(target, "Notice") is True
     assert calls == [("account-1", "Notice")]
+
+
+@pytest.mark.asyncio
+async def test_platform_notification_sender_runs_sync_delivery_and_throttles(
+    monkeypatch,
+):
+    recipient = ReminderRecipient(
+        user_id=1,
+        name="Member",
+        email="member@example.test",
+        platform=Platform.DISCORD,
+        account_id="account-1",
+        tier=MemberTier.LECTURE_EXPLORATION,
+    )
+    calls = []
+    monkeypatch.setattr(
+        notifications,
+        "send_notification",
+        lambda target, message: calls.append((target, message)) or True,
+    )
+    monkeypatch.setattr(notifications.time, "sleep", calls.append)
+
+    sender = notifications.PlatformNotificationSender(delay_seconds=0.5)
+
+    assert await sender.send(recipient, "Notice") is True
+    assert calls == [(recipient, "Notice"), 0.5]
+
+
+def test_rate_limit_retry_honors_retry_after(monkeypatch):
+    responses = iter(
+        [
+            SimpleNamespace(status_code=429, headers={"Retry-After": "0.25"}),
+            SimpleNamespace(status_code=200, headers={}),
+        ]
+    )
+    sleeps = []
+    monkeypatch.setattr(notifications.time, "sleep", sleeps.append)
+
+    response = notifications._call_with_rate_limit_retry(lambda: next(responses))
+
+    assert response.status_code == 200
+    assert sleeps == [0.25]
 
 
 def test_send_facebook_message_uses_page_api(monkeypatch):

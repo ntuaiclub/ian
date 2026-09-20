@@ -20,22 +20,23 @@
 
 import asyncio
 import warnings
-from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
 
+from ian.application.member_notifications import (
+    EventNotFoundError,
+    StaffPermissionError,
+)
 from ian.config import (
-    ALLOWED_CHANNELS,
     DISCORD_LOG_CHANNEL_ID,
     MCP_HOST,
     MCP_PORT,
     STAFF_NOTIFICATION_CHANNEL_ID,
-    TZ_TPE,
 )
+from ian.bootstrap import get_application
+from ian.domain.time import TZ_TPE
 from ian.services import notifications
 from ian.services import rag
-from ian.services.event_service import create_event_service
-from ian.services.member_service import member_service
 from ian.utils.logging import log_event
 
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
@@ -49,20 +50,11 @@ mcp = FastMCP(host=MCP_HOST, port=MCP_PORT, stateless_http=True)
 # ---------------------------------------------------------------------------
 # Permission control
 # ---------------------------------------------------------------------------
-event_service = create_event_service()
-NON_MEMBER_PREFIX = "非社員"
-
-
-async def check_user_permission(
-    platform: Optional[str] = None,
-    account_id: Optional[str] = None,
-    channel_id: Optional[str] = None,
-) -> tuple[bool, str]:
-    """Legacy member permission helper retained for non-Event callers."""
-    role = "非社員"
-    if platform and account_id:
-        role = await member_service.get_member_role(platform, account_id)
-    return bool(channel_id in ALLOWED_CHANNELS or not role.startswith(NON_MEMBER_PREFIX)), role
+application = get_application()
+event_service = application.events
+member_service = application.members
+member_notification_service = application.member_notifications
+checkin_service = application.checkins
 
 
 def initialize_dependencies() -> None:
@@ -181,7 +173,10 @@ async def search_qa_chunks_by_semantics(query: str, top_k: int = 5) -> str:
 
 @mcp.tool(name="notify_staff")
 async def notify_staff(
-    message: str, user_name: str = "", platform: Optional[str] = "", context: str = ""
+    message: str,
+    user_name: str = "",
+    platform: str | None = "",
+    context: str = "",
 ) -> str:
     """
     當 agent 認為需要通知幹部時，使用此工具發送通知訊息到幹部 Discord 頻道。
@@ -254,28 +249,15 @@ async def generate_checkin_code(
         email: （非社員時必填）使用者提供的 Email
     """
     try:
-        from urllib.parse import quote
-
-        # 嘗試從資料庫查詢社員資料
-        member = await member_service.find_user_by_platform(platform, account_id)
-
-        if member:
-            member_name = member.name
-            member_email = member.email
-            if member_name and member_email:
-                url = f"https://watsonshih.github.io/QuickRecord/user.html?name={quote(member_name)}&id={quote(member_email)}"
-                return f"已為社員「{member_name}」產生專屬簽到碼連結：\n{url}"
-
-        # 非社員或資料庫查無資料：需要使用者提供 name 和 email
-        if not name or not email:
+        result = await checkin_service.generate(platform, account_id, name, email)
+        if result.status == "member":
+            return f"已為社員「{result.name}」產生專屬簽到碼連結：\n{result.url}"
+        if result.status == "missing_identity":
             return "在資料庫中查無您的社員資料，請提供您的「姓名」和「Email」以產生簽到碼。"
-
-        if "@" not in email:
+        if result.status == "invalid_email":
             return "請提供有效的 Email 地址（例如：yourname@gmail.com）"
-
-        url = f"https://watsonshih.github.io/QuickRecord/user.html?name={quote(name)}&id={quote(email)}"
         return (
-            f"已為「{name}」產生簽到碼連結：\n{url}\n\n"
+            f"已為「{result.name}」產生簽到碼連結：\n{result.url}\n\n"
             "提醒您：擁有簽到碼不代表已成功報名或有資格入場，"
             "請確認您是否已成功報名該活動（例如檢查 Email 是否有收到報名成功的確認信件）。"
         )
@@ -392,7 +374,8 @@ async def update_personal_prompt(
 
 @mcp.tool(name="notify_members")
 async def notify_members(
-    role: str,
+    platform: str,
+    account_id: str,
     event_id: int | None = None,
     note: str = "",
     custom_message: str = "",
@@ -400,8 +383,8 @@ async def notify_members(
     """
     幹部專用工具：依有效社員的 subscribe 設定發送 Discord、Facebook、LINE 通知。
 
-    權限限制：僅限角色包含「社長」、「部長」、「部員」等幹部身分的使用者使用。
-    系統會以硬邏輯檢查角色字串，非幹部無法使用此功能。
+    權限限制：系統會依 platform 與 account_id 從 ntuai.dev Users 查詢可信的
+    admin／check-in-staff role，不採信呼叫方傳入的角色文字。
 
     支援兩種通知模式：
     A. 活動通知：提供 event_id，系統自動帶入完整活動資訊
@@ -413,84 +396,87 @@ async def notify_members(
     3. note 為選填備註，活動通知模式下會附加在訊息最後
 
     Args:
-        role: 使用者的角色（系統自動帶入，用於權限檢查）
+        platform: 使用者所在的平台（Discord、FB、LINE）
+        account_id: 使用者在該平台的帳號 ID，系統以此查詢可信的 staff role
         event_id: 要通知的活動 ID，留空則列出即將舉辦的活動
         note: 幹部附註訊息（選填），活動通知時附加在訊息最後
         custom_message: 自訂通知訊息（選填），若提供則直接發送此訊息，不需選擇活動
     """
-    if not notifications.is_staff_role(role):
-        return "此功能僅限幹部使用（角色需包含社長、部長或部員）。如果您是幹部但尚未綁定帳號，請先透過 Email 綁定身分。"
+    try:
+        if event_id is not None:
+            result = await member_notification_service.notify_event(
+                platform,
+                account_id,
+                event_id,
+                note,
+            )
+            delivery = result.delivery
+            return (
+                f"通知已發送完成！\n\n"
+                f"活動: {result.event.title} (ID: {result.event.id})\n"
+                f"通知對象: {delivery.total_members} 位符合活動資格的有效社員\n"
+                f"Discord: {delivery.discord_ok} 成功, {delivery.discord_fail} 失敗\n"
+                f"Facebook: {delivery.fb_ok} 成功, {delivery.fb_fail} 失敗\n"
+                f"LINE: {delivery.line_ok} 成功, {delivery.line_fail} 失敗"
+            )
 
-    if event_id is not None:
-        event = await event_service.get_published_event_for_staff(event_id)
-        if event is None:
-            return f"找不到 ID 為 {event_id} 的活動。"
-        recipients = [
-            recipient
-            for recipient in await member_service.list_reminder_recipients()
-            if event_service.can_access(event, int(recipient.tier))
-        ]
-        message = event_service.format_event(event)
-        if note.strip():
-            message += f"\n\n附註：{note.strip()}"
-        result = await asyncio.to_thread(
-            notifications.send_notification_to_members, message, recipients
-        )
-        return (
-            f"通知已發送完成！\n\n活動: {event.title} (ID: {event.id})\n"
-            f"通知對象: {result['total_members']} 位符合活動資格的有效社員\n"
-            f"Discord: {result['discord_ok']} 成功, {result['discord_fail']} 失敗\n"
-            f"Facebook: {result['fb_ok']} 成功, {result['fb_fail']} 失敗\n"
-            f"LINE: {result['line_ok']} 成功, {result['line_fail']} 失敗"
-        )
+        if custom_message and custom_message.strip():
+            log_event(
+                "job_started",
+                "mcp_server",
+                status="started",
+                job="notify_members",
+                notification_type="custom",
+            )
+            delivery = await member_notification_service.notify_custom(
+                platform,
+                account_id,
+                custom_message,
+            )
+            await asyncio.to_thread(
+                notifications.send_discord_channel_message,
+                DISCORD_LOG_CHANNEL_ID,
+                f"```\n[STAFF NOTIFY] Custom message\n"
+                f"Discord: {delivery.discord_ok}/{delivery.discord_ok + delivery.discord_fail}\n"
+                f"Facebook: {delivery.fb_ok}/{delivery.fb_ok + delivery.fb_fail}\n"
+                f"LINE: {delivery.line_ok}/{delivery.line_ok + delivery.line_fail}\n```",
+            )
+            log_event(
+                "job_completed",
+                "mcp_server",
+                status=delivery.status,
+                job="notify_members",
+                notification_type="custom",
+                recipient_count=delivery.total_members,
+                sent_count=delivery.sent_count,
+                failed_count=delivery.failed_count,
+            )
+            return (
+                f"自訂通知已發送完成！\n\n"
+                f"通知對象: {delivery.total_members} 位已綁定帳號的有效社員\n"
+                f"Discord: {delivery.discord_ok} 成功, {delivery.discord_fail} 失敗\n"
+                f"Facebook: {delivery.fb_ok} 成功, {delivery.fb_fail} 失敗\n"
+                f"LINE: {delivery.line_ok} 成功, {delivery.line_fail} 失敗"
+            )
 
-    # Mode A: custom message (no event needed)
-    if custom_message and custom_message.strip():
-        message = f"NTUAI 通知\n\n{custom_message.strip()}"
-        log_event(
-            "job_started",
-            "mcp_server",
-            status="started",
-            job="notify_members",
-            notification_type="custom",
+        upcoming = await member_notification_service.list_upcoming(
+            platform,
+            account_id,
+            limit=3,
         )
+    except StaffPermissionError:
+        return "此功能僅限已驗證的幹部使用。如果您是幹部但尚未綁定帳號，請先透過 Email 綁定身分。"
+    except EventNotFoundError:
+        return f"找不到 ID 為 {event_id} 的活動。"
+    except Exception as error:
+        _log_mcp_tool_failure(
+            "notify_members",
+            error,
+            platform=platform,
+            account_id=account_id,
+        )
+        return "社員通知服務暫時無法使用，請稍後再試。"
 
-        recipients = await member_service.list_reminder_recipients()
-        result = await asyncio.to_thread(
-            notifications.send_notification_to_members, message, recipients
-        )
-
-        summary = (
-            f"自訂通知已發送完成！\n\n"
-            f"通知對象: {result['total_members']} 位已綁定帳號的有效社員\n"
-            f"Discord: {result['discord_ok']} 成功, {result['discord_fail']} 失敗\n"
-            f"Facebook: {result['fb_ok']} 成功, {result['fb_fail']} 失敗\n"
-            f"LINE: {result['line_ok']} 成功, {result['line_fail']} 失敗"
-        )
-
-        await asyncio.to_thread(
-            notifications.send_discord_channel_message,
-            DISCORD_LOG_CHANNEL_ID,
-            f"```\n[STAFF NOTIFY] Custom message\n"
-            f"Discord: {result['discord_ok']}/{result['discord_ok'] + result['discord_fail']}\n"
-            f"Facebook: {result['fb_ok']}/{result['fb_ok'] + result['fb_fail']}\n"
-            f"LINE: {result['line_ok']}/{result['line_ok'] + result['line_fail']}\n```",
-        )
-        failure_count = result["discord_fail"] + result["fb_fail"] + result["line_fail"]
-        sent_count = result["discord_ok"] + result["fb_ok"] + result["line_ok"]
-        log_event(
-            "job_completed",
-            "mcp_server",
-            status="success" if failure_count == 0 else "partial_failure",
-            job="notify_members",
-            notification_type="custom",
-            recipient_count=result["total_members"],
-            sent_count=sent_count,
-            failed_count=failure_count,
-        )
-        return summary
-
-    upcoming = await event_service.list_upcoming_events(viewer_tier=3, limit=3)
     if not upcoming:
         return "目前沒有即將舉辦的活動。你也可以直接提供自訂訊息來通知社員。"
 
@@ -506,43 +492,34 @@ async def notify_members(
     return "\n\n".join(lines)
 
 
-def entrypoint(http: bool = False, host: str = "0.0.0.0", port: int = 5191):
+def run_mcp_server(
+    host: str = "0.0.0.0",
+    port: int = 5191,
+) -> None:
     initialize_dependencies()
 
-    if http:
-        # Use FastMCP's built-in streamable-http transport (stateless mode)
-        # This avoids the SSE session leak in mcp/server/sse.py where
-        # _read_stream_writers entries accumulate and never get cleaned up.
-        import uvicorn
-        from starlette.routing import Route
-        from starlette.responses import JSONResponse
+    # Stateless Streamable HTTP avoids the legacy SSE session-writer leak.
+    import uvicorn
+    from starlette.responses import JSONResponse
+    from starlette.routing import Route
 
-        async def health_check(request):
-            """Health check endpoint"""
-            return JSONResponse({"status": "ok"})
+    async def health_check(request):
+        """Health check endpoint."""
+        return JSONResponse({"status": "ok"})
 
-        mcp._custom_starlette_routes = [
-            Route("/health", health_check, methods=["GET"]),
-        ]
+    mcp._custom_starlette_routes = [
+        Route("/health", health_check, methods=["GET"]),
+    ]
 
-        log_event(
-            "service_started",
-            "mcp_server",
-            status="running",
-            service="mcp_server",
-            transport="streamable_http",
-            host=host,
-            port=port,
-        )
+    log_event(
+        "service_started",
+        "mcp_server",
+        status="running",
+        service="mcp_server",
+        transport="streamable_http",
+        host=host,
+        port=port,
+    )
 
-        starlette_app = mcp.streamable_http_app()
-        uvicorn.run(starlette_app, host=host, port=port, log_level="info")
-    else:
-        log_event(
-            "service_started",
-            "mcp_server",
-            status="running",
-            service="mcp_server",
-            transport="stdio",
-        )
-        mcp.run(transport="stdio")
+    starlette_app = mcp.streamable_http_app()
+    uvicorn.run(starlette_app, host=host, port=port, log_level="info")

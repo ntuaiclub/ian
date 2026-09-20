@@ -24,7 +24,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from ian.config import TZ_TPE
+from ian.domain.time import TZ_TPE
 from ian.utils.logging import (
     REDACTED,
     StructuredLogger,

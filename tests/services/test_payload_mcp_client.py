@@ -20,7 +20,7 @@
 
 import pytest
 
-from ian.services.payload_mcp_client import (
+from ian.infrastructure.payload_mcp.client import (
     PayloadMcpConfigurationError,
     PayloadMcpSchemaError,
     StreamableHttpMcpToolCaller,

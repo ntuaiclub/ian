@@ -25,14 +25,17 @@ from datetime import datetime, timezone
 import pytest
 
 from ian.domain.members import Platform
-from ian.services.member_mcp_repository import (
-    DuplicateMemberError,
-    MemberMcpRepository,
-    MemberRepositoryError,
-    MemberSchemaError,
-    MemberTransportError,
+from ian.infrastructure.payload_mcp.client import (
+    PayloadMcpConfigurationError,
+    PayloadMcpSchemaError,
     StreamableHttpMcpToolCaller,
     parse_payload_documents,
+)
+from ian.infrastructure.payload_mcp.member_repository import (
+    DuplicateMemberError,
+    PayloadMcpMemberRepository,
+    MemberRepositoryError,
+    MemberTransportError,
 )
 
 
@@ -51,6 +54,7 @@ def user_doc(user_id: int = 10) -> dict:
         "name": "Test User",
         "email": "test@example.test",
         "emailVerified": True,
+        "role": ["user"],
         "discord_acc_id": "discord-10",
         "fb_acc_id": None,
         "line_acc_id": None,
@@ -92,21 +96,21 @@ def test_parse_payload_documents_handles_empty_result():
 
 @pytest.mark.parametrize("text", ["no json here", "```json\ninvalid\n```"])
 def test_parse_payload_documents_rejects_invalid_contract(text):
-    with pytest.raises(MemberSchemaError):
+    with pytest.raises(PayloadMcpSchemaError):
         parse_payload_documents(text)
 
 
 def test_streamable_caller_requires_url_and_api_key():
     caller = StreamableHttpMcpToolCaller("", "", 20)
 
-    with pytest.raises(MemberRepositoryError):
+    with pytest.raises(PayloadMcpConfigurationError):
         caller._require_config()
 
 
 @pytest.mark.asyncio
 async def test_find_user_by_email_uses_whitelisted_fields_and_memberships():
     caller = QueueCaller(mcp_text(user_doc()), mcp_text(membership_doc()))
-    repository = MemberMcpRepository(caller)
+    repository = PayloadMcpMemberRepository(caller)
 
     user = await repository.find_user_by_email("test@example.test")
 
@@ -126,7 +130,7 @@ async def test_find_user_by_email_uses_whitelisted_fields_and_memberships():
 @pytest.mark.asyncio
 async def test_find_user_by_platform_rejects_duplicate_matches():
     caller = QueueCaller(mcp_text(user_doc(10), user_doc(11)))
-    repository = MemberMcpRepository(caller)
+    repository = PayloadMcpMemberRepository(caller)
 
     with pytest.raises(DuplicateMemberError):
         await repository.find_user_by_platform(Platform.DISCORD, "discord-10")
@@ -135,7 +139,7 @@ async def test_find_user_by_platform_rejects_duplicate_matches():
 @pytest.mark.asyncio
 async def test_update_user_rejects_non_whitelisted_fields_without_calling_mcp():
     caller = QueueCaller()
-    repository = MemberMcpRepository(caller)
+    repository = PayloadMcpMemberRepository(caller)
 
     with pytest.raises(MemberRepositoryError):
         await repository.update_user(10, {"role": "admin"})
@@ -150,7 +154,7 @@ async def test_update_user_calls_mcp_and_reads_back():
         mcp_text(updated_doc),
         mcp_text(membership_doc()),
     )
-    repository = MemberMcpRepository(caller)
+    repository = PayloadMcpMemberRepository(caller)
 
     updated = await repository.update_user(10, {"personal_prompt": "concise"})
 
@@ -172,7 +176,7 @@ async def test_update_user_confirms_ambiguous_transport_failure_by_read_back():
             return self.responses.popleft()
 
     caller = AmbiguousCaller(mcp_text(updated_doc), mcp_text(membership_doc()))
-    repository = MemberMcpRepository(caller)
+    repository = PayloadMcpMemberRepository(caller)
 
     updated = await repository.update_user(10, {"discord_acc_id": "discord-new"})
 
@@ -191,7 +195,7 @@ async def test_update_user_preserves_transport_failure_when_read_back_differs():
             return self.responses.popleft()
 
     caller = FailedCaller(mcp_text(current_doc), mcp_text(membership_doc()))
-    repository = MemberMcpRepository(caller)
+    repository = PayloadMcpMemberRepository(caller)
 
     with pytest.raises(MemberTransportError):
         await repository.update_user(10, {"discord_acc_id": "discord-new"})

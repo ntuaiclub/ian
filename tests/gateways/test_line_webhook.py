@@ -92,6 +92,31 @@ def test_handle_line_message_replies_to_empty_message(monkeypatch, text):
     assert replies == [("reply-token", "請輸入您的問題！")]
 
 
+def test_handle_line_message_defers_loading_api_to_background_task(monkeypatch):
+    captured = []
+
+    class FakeThread:
+        def __init__(self, *, target, args):
+            captured.append((target, args))
+
+        def start(self):
+            coroutine = captured[0][1][0]
+            coroutine.close()
+
+    monkeypatch.setattr(
+        line_webhook.requests,
+        "post",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("callback must not call loading API")
+        ),
+    )
+    monkeypatch.setattr(line_webhook.threading, "Thread", FakeThread)
+
+    line_webhook.handle_line_message(_event("hello"))
+
+    assert len(captured) == 1
+
+
 def _stub_line_task(monkeypatch, agent_result):
     replies = []
     history = []
@@ -111,6 +136,11 @@ def _stub_line_task(monkeypatch, agent_result):
         line_webhook.line_bot_api,
         "reply_message",
         lambda token, messages: replies.append((token, messages)),
+    )
+    monkeypatch.setattr(
+        line_webhook.line_bot_api,
+        "push_message",
+        lambda chat_id, messages: replies.append((f"push:{chat_id}", messages)),
     )
     monkeypatch.setattr(
         line_webhook,
@@ -177,10 +207,10 @@ def test_process_line_message_task_replies_with_message_chunks(monkeypatch, caps
     assert "hello" not in json.dumps(entries)
 
 
-def test_process_line_message_task_logs_reply_failure_without_private_data(
+def test_process_line_message_task_falls_back_to_push_message(
     monkeypatch, capsys
 ):
-    _replies, history = _stub_line_task(
+    replies, history = _stub_line_task(
         monkeypatch,
         AgentMessageResult(text="private agent reply", should_reply=True),
     )
@@ -196,10 +226,15 @@ def test_process_line_message_task_logs_reply_failure_without_private_data(
         )
     )
 
-    assert history == []
+    assert replies[0][0] == "push:chat-1"
+    assert history == [
+        ("user-1", "Alice", "private question", "private agent reply", "LINE")
+    ]
     entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
-    assert entries[-1]["event"] == "external_send_failure"
-    assert entries[-1]["error_type"] == "RuntimeError"
+    assert entries[-2]["event"] == "external_send_failure"
+    assert entries[-2]["error_type"] == "RuntimeError"
+    assert entries[-1]["event"] == "reply_sent"
+    assert entries[-1]["status"] == "fallback_success"
     for sensitive in (
         "reply-token",
         "user-1",
@@ -207,5 +242,46 @@ def test_process_line_message_task_logs_reply_failure_without_private_data(
         "private question",
         "private agent reply",
         "private LINE detail",
+    ):
+        assert sensitive not in json.dumps(entries)
+
+
+def test_process_line_message_task_logs_push_fallback_failure_without_private_data(
+    monkeypatch, capsys
+):
+    _replies, history = _stub_line_task(
+        monkeypatch,
+        AgentMessageResult(text="private agent reply", should_reply=True),
+    )
+    monkeypatch.setattr(
+        line_webhook.line_bot_api,
+        "reply_message",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("private reply detail")),
+    )
+    monkeypatch.setattr(
+        line_webhook.line_bot_api,
+        "push_message",
+        lambda *_args: (_ for _ in ()).throw(RuntimeError("private push detail")),
+    )
+
+    asyncio.run(
+        line_webhook.process_line_message_task(
+            "reply-token", "user-1", "private question", "chat-1", "1on1"
+        )
+    )
+
+    assert history == []
+    entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert entries[-1]["event"] == "external_send_failure"
+    assert entries[-1]["operation"] == "push_message_fallback"
+    assert entries[-1]["error_type"] == "RuntimeError"
+    for sensitive in (
+        "reply-token",
+        "user-1",
+        "chat-1",
+        "private question",
+        "private agent reply",
+        "private reply detail",
+        "private push detail",
     ):
         assert sensitive not in json.dumps(entries)

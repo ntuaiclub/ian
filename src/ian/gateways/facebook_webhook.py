@@ -24,18 +24,19 @@ import time
 
 import requests
 
+from ian.bootstrap import get_application
 from ian.config import PAGE_ACCESS_TOKEN
 from ian.gateways.agent_bridge import run_agent_message_flow
 from ian.gateways.messaging_common import (
     get_current_time,
     save_chat_history,
 )
-from ian.services.member_service import member_service
 from ian.utils.logging import elapsed_ms, hash_identifier, log_event
 
 PROCESSED_MESSAGES = {}
 PROCESSED_MESSAGES_LOCK = threading.Lock()
 CACHE_EXPIRATION_SECONDS = 600
+member_service = get_application().members
 
 
 def cleanup_processed_messages():
@@ -57,7 +58,13 @@ async def send_typing_indicator(recipient_id, action="typing_on", correlation_id
     data = {"recipient": {"id": recipient_id}, "sender_action": action}
     headers = {"Content-Type": "application/json"}
     try:
-        response = requests.post(url, headers=headers, json=data, timeout=3)
+        response = await asyncio.to_thread(
+            requests.post,
+            url,
+            headers=headers,
+            json=data,
+            timeout=3,
+        )
         if response.status_code != 200:
             log_event(
                 "external_send_failure",
@@ -227,7 +234,7 @@ async def process_message_task(sender_id, user_message, mid=None):
         await send_typing_indicator(sender_id, "typing_on", correlation_id)
         member = await member_service.find_user_by_platform("FB", sender_id)
         user_name = (
-            get_fb_user_profile(sender_id)
+            await asyncio.to_thread(get_fb_user_profile, sender_id)
             or (member.name if member else None)
             or "FB訪客"
         )
@@ -270,13 +277,29 @@ async def process_message_task(sender_id, user_message, mid=None):
                 reason="agent_decision",
             )
             if agent_result.reaction_emoji and mid:
-                send_reaction(
-                    sender_id, mid, agent_result.reaction_emoji, correlation_id
+                await asyncio.to_thread(
+                    send_reaction,
+                    sender_id,
+                    mid,
+                    agent_result.reaction_emoji,
+                    correlation_id,
                 )
             return
 
-        send_message(sender_id, agent_result.text, correlation_id)
-        save_chat_history(sender_id, user_name, user_message, agent_result.text, "FB")
+        await asyncio.to_thread(
+            send_message,
+            sender_id,
+            agent_result.text,
+            correlation_id,
+        )
+        await asyncio.to_thread(
+            save_chat_history,
+            sender_id,
+            user_name,
+            user_message,
+            agent_result.text,
+            "FB",
+        )
 
     except Exception as e:
         log_event(
@@ -290,7 +313,8 @@ async def process_message_task(sender_id, user_message, mid=None):
             sender_id=sender_id,
             error=e,
         )
-        send_message(
+        await asyncio.to_thread(
+            send_message,
             sender_id,
             "😰 Ian 目前有點忙碌，請稍後再試。\nIan is currently busy. Please try again later.",
             correlation_id,

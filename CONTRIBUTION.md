@@ -69,7 +69,7 @@ uv run ian --help
 
 ```bash
 uv run ian serve
-uv run ian mcp --http --port 5191
+uv run ian mcp --port 5191
 uv run ian webhook
 uv run ian reminder --daemon
 uv run ian discord

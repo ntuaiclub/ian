@@ -21,12 +21,11 @@
 import asyncio
 import time
 from datetime import date, datetime, timedelta
-from urllib.parse import quote
 
-from ian.config import TZ_TPE
+from ian.application.reminders import ReminderLoadError
+from ian.bootstrap import get_application
+from ian.domain.time import TZ_TPE
 from ian.services import notifications
-from ian.services.event_service import create_event_service
-from ian.services.member_service import ReminderRecipient, member_service
 from ian.utils.logging import elapsed_ms, log_event
 
 REMINDER_HOUR = 19
@@ -35,7 +34,8 @@ _FAILURE_NOTIFICATIONS = {
     "load_events": "FAILED to load event data",
     "load_members": "FAILED to load member data",
 }
-event_service = create_event_service()
+application = get_application()
+reminder_service = application.reminders
 
 
 def seconds_until_next_run(
@@ -48,10 +48,6 @@ def seconds_until_next_run(
     if current >= target:
         target += timedelta(days=1)
     return (target - current).total_seconds()
-
-
-def load_recipients() -> list[ReminderRecipient]:
-    return asyncio.run(member_service.list_reminder_recipients())
 
 
 def _report_job_failure(
@@ -99,14 +95,12 @@ def run_once(target_date: str | None = None, dry: bool = False):
     )
 
     try:
-        events = asyncio.run(
-            event_service.list_events_on_date(parsed_target_date, viewer_tier=3)
-        )
-    except Exception as e:
-        _report_job_failure(started_at, target_date, "load_events", e)
+        result = asyncio.run(reminder_service.run(parsed_target_date, dry=dry))
+    except ReminderLoadError as error:
+        _report_job_failure(started_at, target_date, error.stage, error)
         return
 
-    if not events:
+    if result.status == "no_events":
         log_event(
             "job_completed",
             "reminder_runner",
@@ -119,13 +113,7 @@ def run_once(target_date: str | None = None, dry: bool = False):
         )
         return
 
-    try:
-        recipients = load_recipients()
-    except Exception as e:
-        _report_job_failure(started_at, target_date, "load_members", e)
-        return
-
-    if dry:
+    if result.status == "dry_run":
         log_event(
             "job_completed",
             "reminder_runner",
@@ -133,75 +121,36 @@ def run_once(target_date: str | None = None, dry: bool = False):
             duration_ms=elapsed_ms(started_at),
             job="daily_reminder",
             target_date=target_date,
-            event_count=len(events),
-            recipient_count=len(recipients),
+            event_count=result.event_count,
+            recipient_count=result.recipient_count,
         )
         return
 
-    delivery = notifications.empty_delivery_result(recipients)
-    for recipient in recipients:
-        visible_events = [
-            event
-            for event in events
-            if event_service.can_access(event, int(recipient.tier))
-        ]
-        if not visible_events:
-            continue
-        personal_message = event_service.format_events(visible_events)
-        if recipient.name and recipient.email:
-            checkin_url = (
-                "https://watsonshih.github.io/QuickRecord/user.html?"
-                f"name={quote(recipient.name)}&id={quote(recipient.email)}"
-            )
-            personal_message += f"\n\n簽到碼連結：{checkin_url}"
-
-        try:
-            success = notifications.send_notification(recipient, personal_message)
-        except Exception as e:
-            success = False
-            log_event(
-                "external_send_failure",
-                "reminder_runner",
-                level="error",
-                platform=recipient.platform.value,
-                status="error",
-                recipient_id=recipient.account_id,
-                operation="send_reminder",
-                error=e,
-            )
-        outcome = "ok" if success else "fail"
-        delivery[f"{recipient.platform.value}_{outcome}"] += 1
-        time.sleep(0.5)
-
-    event_titles = ", ".join(event.title for event in events)
+    delivery = result.delivery
+    if delivery is None:
+        raise RuntimeError("completed reminder result requires delivery data")
+    event_titles = ", ".join(result.event_titles)
     summary = (
         f"```\n"
         f"[REMINDER] {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
         f"Events on {target_date}: {event_titles}\n"
-        f"Discord: {delivery['discord_ok']} sent, {delivery['discord_fail']} failed\n"
-        f"Facebook: {delivery['fb_ok']} sent, {delivery['fb_fail']} failed\n"
-        f"LINE: {delivery['line_ok']} sent, {delivery['line_fail']} failed\n"
-        f"Total deliveries: {sum(delivery[key] for key in ('discord_ok', 'fb_ok', 'line_ok'))}\n"
+        f"Discord: {delivery.discord_ok} sent, {delivery.discord_fail} failed\n"
+        f"Facebook: {delivery.fb_ok} sent, {delivery.fb_fail} failed\n"
+        f"LINE: {delivery.line_ok} sent, {delivery.line_fail} failed\n"
+        f"Total deliveries: {delivery.sent_count}\n"
         f"```"
     )
     log_event(
         "job_completed",
         "reminder_runner",
-        status=(
-            "success"
-            if sum(delivery[key] for key in ("discord_fail", "fb_fail", "line_fail"))
-            == 0
-            else "partial_failure"
-        ),
+        status=delivery.status,
         duration_ms=elapsed_ms(started_at),
         job="daily_reminder",
         target_date=target_date,
-        event_count=len(events),
-        recipient_count=len(recipients),
-        sent_count=sum(delivery[key] for key in ("discord_ok", "fb_ok", "line_ok")),
-        failed_count=sum(
-            delivery[key] for key in ("discord_fail", "fb_fail", "line_fail")
-        ),
+        event_count=result.event_count,
+        recipient_count=result.recipient_count,
+        sent_count=delivery.sent_count,
+        failed_count=delivery.failed_count,
     )
     notifications.send_log(summary)
 

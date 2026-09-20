@@ -24,43 +24,17 @@ from types import SimpleNamespace
 
 import pytest
 
+from ian.application.member_notifications import (
+    EventNotFoundError,
+    EventNotificationResult,
+)
+from ian.application.notifications import DeliveryReport
 from ian.domain.events import Event
-from ian.domain.members import MemberTier
 from ian.gateways import mcp_server
 
 
 def _run(coro):
     return asyncio.run(coro)
-
-
-@pytest.mark.parametrize(
-    ("channel_id", "resolved_role", "expected"),
-    [
-        pytest.param("allowed", "非社員", (True, "非社員"), id="allowed-channel"),
-        pytest.param("", "VIP 社員", (True, "VIP 社員"), id="valid-member"),
-        pytest.param("", "非社員", (False, "非社員"), id="non-member"),
-        pytest.param(
-            "",
-            "非社員（會籍已過期）",
-            (False, "非社員（會籍已過期）"),
-            id="expired-member",
-        ),
-    ],
-)
-def test_check_user_permission_uses_allowed_channels_and_member_role(
-    monkeypatch, channel_id, resolved_role, expected
-):
-    monkeypatch.setattr(mcp_server, "ALLOWED_CHANNELS", {"allowed"})
-
-    async def get_member_role(*_args):
-        return resolved_role
-
-    monkeypatch.setattr(mcp_server.member_service, "get_member_role", get_member_role)
-
-    assert (
-        _run(mcp_server.check_user_permission("Discord", "account-1", channel_id))
-        == expected
-    )
 
 
 @pytest.mark.parametrize(
@@ -180,20 +154,18 @@ def test_member_tool_wrappers_return_messages_and_handle_exceptions(
 
 
 def test_notify_members_rejects_non_staff_before_loading_data(monkeypatch):
-    monkeypatch.setattr(mcp_server.notifications, "is_staff_role", lambda _role: False)
+    async def reject(*_args, **_kwargs):
+        raise mcp_server.StaffPermissionError
 
-    async def fail(*_args, **_kwargs):
-        raise AssertionError("event data should not load")
+    monkeypatch.setattr(
+        mcp_server.member_notification_service,
+        "list_upcoming",
+        reject,
+    )
 
-    monkeypatch.setattr(mcp_server.event_service, "list_upcoming_events", fail)
+    result = _run(mcp_server.notify_members("Discord", "account-1"))
 
-    result = _run(mcp_server.notify_members("一般社員"))
-
-    assert "此功能僅限幹部使用" in result
-
-
-def _stub_staff(monkeypatch):
-    monkeypatch.setattr(mcp_server.notifications, "is_staff_role", lambda _role: True)
+    assert "此功能僅限已驗證的幹部使用" in result
 
 
 def _event(event_id=42, *, tier=0):
@@ -212,29 +184,18 @@ def _event(event_id=42, *, tier=0):
 
 
 def test_notify_members_sends_custom_notification(monkeypatch):
-    _stub_staff(monkeypatch)
-    delivery = {
-        "total_members": 2,
-        "discord_ok": 1,
-        "discord_fail": 1,
-        "fb_ok": 0,
-        "fb_fail": 0,
-        "line_ok": 0,
-        "line_fail": 0,
-    }
-    sent = []
+    delivery = DeliveryReport(total_members=2, discord_ok=1, discord_fail=1)
     logs = []
 
-    async def list_recipients():
-        return ["member"]
+    async def notify_custom(platform, account_id, message):
+        assert (platform, account_id) == ("Discord", "account-1")
+        assert message == "  Custom alert  "
+        return delivery
 
     monkeypatch.setattr(
-        mcp_server.member_service, "list_reminder_recipients", list_recipients
-    )
-    monkeypatch.setattr(
-        mcp_server.notifications,
-        "send_notification_to_members",
-        lambda message, members: sent.append((message, members)) or delivery,
+        mcp_server.member_notification_service,
+        "notify_custom",
+        notify_custom,
     )
     monkeypatch.setattr(
         mcp_server.notifications,
@@ -242,121 +203,110 @@ def test_notify_members_sends_custom_notification(monkeypatch):
         lambda channel, message: logs.append((channel, message)) or True,
     )
 
-    result = _run(mcp_server.notify_members("部員", custom_message="  Custom alert  "))
+    result = _run(
+        mcp_server.notify_members(
+            "Discord",
+            "account-1",
+            custom_message="  Custom alert  ",
+        )
+    )
 
-    assert sent == [("NTUAI 通知\n\nCustom alert", ["member"])]
     assert "通知對象: 2" in result
     assert "Discord: 1 成功, 1 失敗" in result
     assert len(logs) == 1
 
 
 def test_notify_members_reports_missing_event_without_sending(monkeypatch):
-    _stub_staff(monkeypatch)
-
-    async def find_event(_event_id):
-        return None
+    async def notify_event(*_args, **_kwargs):
+        raise EventNotFoundError(42)
 
     monkeypatch.setattr(
-        mcp_server.event_service,
-        "get_published_event_for_staff",
-        find_event,
-    )
-    monkeypatch.setattr(
-        mcp_server.notifications,
-        "send_notification_to_members",
-        lambda *_: (_ for _ in ()).throw(
-            AssertionError("notification should not send")
-        ),
+        mcp_server.member_notification_service,
+        "notify_event",
+        notify_event,
     )
 
-    result = _run(mcp_server.notify_members("部長", event_id=42))
+    result = _run(mcp_server.notify_members("Discord", "account-1", event_id=42))
 
     assert result == "找不到 ID 為 42 的活動。"
 
 
 def test_notify_members_sends_formatted_event_notification(monkeypatch):
-    _stub_staff(monkeypatch)
     selected_event = _event(tier=2)
-    delivery = {
-        "total_members": 3,
-        "discord_ok": 3,
-        "discord_fail": 0,
-        "fb_ok": 0,
-        "fb_fail": 0,
-        "line_ok": 0,
-        "line_fail": 0,
-    }
-    async def find_event(_event_id):
-        return selected_event
+    delivery = DeliveryReport(total_members=1, discord_ok=1)
+
+    async def notify_event(platform, account_id, event_id, note):
+        assert (platform, account_id, event_id, note) == (
+            "Discord",
+            "account-1",
+            42,
+            " reminder ",
+        )
+        return EventNotificationResult(selected_event, delivery)
 
     monkeypatch.setattr(
-        mcp_server.event_service,
-        "get_published_event_for_staff",
-        find_event,
+        mcp_server.member_notification_service,
+        "notify_event",
+        notify_event,
     )
 
-    async def list_recipients():
-        return [
-            SimpleNamespace(tier=MemberTier.LECTURE_EXPLORATION),
-            SimpleNamespace(tier=MemberTier.HANDS_ON),
-        ]
-
-    monkeypatch.setattr(
-        mcp_server.member_service, "list_reminder_recipients", list_recipients
+    result = _run(
+        mcp_server.notify_members(
+            "Discord",
+            "account-1",
+            event_id=42,
+            note=" reminder ",
+        )
     )
-    sent = []
-    monkeypatch.setattr(
-        mcp_server.notifications,
-        "send_notification_to_members",
-        lambda message, members: sent.append((message, members)) or delivery,
-    )
-    monkeypatch.setattr(
-        mcp_server.notifications, "send_discord_channel_message", lambda *_: True
-    )
-
-    result = _run(mcp_server.notify_members("社長", event_id=42, note=" reminder "))
 
     assert "活動: Agent Evaluation (ID: 42)" in result
-    assert "Discord: 3 成功, 0 失敗" in result
-    assert len(sent[0][1]) == 1
-    assert sent[0][1][0].tier is MemberTier.HANDS_ON
-    assert "附註：reminder" in sent[0][0]
+    assert "Discord: 1 成功, 0 失敗" in result
 
 
 def test_notify_members_lists_upcoming_events_with_ids(monkeypatch):
-    _stub_staff(monkeypatch)
-
-    async def list_upcoming_events(*_args, **_kwargs):
+    async def list_upcoming(*_args, **_kwargs):
         return [_event()]
 
     monkeypatch.setattr(
-        mcp_server.event_service,
-        "list_upcoming_events",
-        list_upcoming_events,
+        mcp_server.member_notification_service,
+        "list_upcoming",
+        list_upcoming,
     )
 
-    result = _run(mcp_server.notify_members("部員"))
+    result = _run(mcp_server.notify_members("Discord", "account-1"))
 
     assert "ID 42: Agent Evaluation" in result
     assert "日期: 2026-08-01 19:00" in result
     assert "地點: 新生" in result
 
 
-def test_stdio_entrypoint_emits_structured_log_without_stdout(monkeypatch, capsys):
+def test_mcp_runner_starts_streamable_http_server(monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(mcp_server, "initialize_dependencies", lambda: None)
     monkeypatch.setattr(
         mcp_server.mcp,
+        "streamable_http_app",
+        lambda: "starlette-app",
+    )
+    import uvicorn
+
+    monkeypatch.setattr(
+        uvicorn,
         "run",
-        lambda **kwargs: calls.append(kwargs),
+        lambda app, **kwargs: calls.append((app, kwargs)),
     )
 
-    mcp_server.entrypoint(http=False)
+    mcp_server.run_mcp_server(host="127.0.0.1", port=6000)
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert calls == [{"transport": "stdio"}]
+    assert calls == [
+        (
+            "starlette-app",
+            {"host": "127.0.0.1", "port": 6000, "log_level": "info"},
+        )
+    ]
     entry = json.loads(captured.err)
     assert entry["event"] == "service_started"
     assert entry["component"] == "mcp_server"
-    assert entry["transport"] == "stdio"
+    assert entry["transport"] == "streamable_http"
