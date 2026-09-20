@@ -18,25 +18,23 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
-import warnings
-
 import asyncio
-from typing import Optional, Tuple
+import warnings
+from typing import Optional
 
-import pandas as pd
 from mcp.server.fastmcp import FastMCP
 
 from ian.config import (
     ALLOWED_CHANNELS,
-    COURSE_DATA_URL,
     DISCORD_LOG_CHANNEL_ID,
     MCP_HOST,
     MCP_PORT,
     STAFF_NOTIFICATION_CHANNEL_ID,
+    TZ_TPE,
 )
-from ian.services import course_catalog
 from ian.services import notifications
 from ian.services import rag
+from ian.services.event_service import create_event_service
 from ian.services.member_service import member_service
 from ian.utils.logging import log_event
 
@@ -51,6 +49,7 @@ mcp = FastMCP(host=MCP_HOST, port=MCP_PORT, stateless_http=True)
 # ---------------------------------------------------------------------------
 # Permission control
 # ---------------------------------------------------------------------------
+event_service = create_event_service()
 NON_MEMBER_PREFIX = "非社員"
 
 
@@ -58,32 +57,18 @@ async def check_user_permission(
     platform: Optional[str] = None,
     account_id: Optional[str] = None,
     channel_id: Optional[str] = None,
-) -> Tuple[bool, str]:
-    """Return (has_permission, role) for the user.
-
-    Role is looked up from the bound member DB (NOT from any role string passed
-    by the caller / LLM). Permission is granted when:
-      - the user is in an allowed channel, OR
-      - the user's bound member record is valid (role does not start with 非社員).
-
-    Returns the resolved role string for logging / downstream use.
-    """
+) -> tuple[bool, str]:
+    """Legacy member permission helper retained for non-Event callers."""
     role = "非社員"
     if platform and account_id:
-        role = await member_service.get_member_role(platform, str(account_id).strip())
-
-    if channel_id and channel_id in ALLOWED_CHANNELS:
-        return True, role
-    if role and not role.startswith(NON_MEMBER_PREFIX):
-        return True, role
-    return False, role
+        role = await member_service.get_member_role(platform, account_id)
+    return bool(channel_id in ALLOWED_CHANNELS or not role.startswith(NON_MEMBER_PREFIX)), role
 
 
 def initialize_dependencies() -> None:
     """Initialize external data sources when the MCP server starts."""
     try:
         rag.initialize_rag_system()
-        course_catalog.load_course_data_from_url(COURSE_DATA_URL)
     except Exception as e:
         log_event(
             "operation_failed",
@@ -119,92 +104,30 @@ def _log_mcp_tool_failure(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool(name="course_retreviler")
-async def search_course_chunks_by_semantics(
+@mcp.tool(name="event_retriever")
+async def event_retriever(
     platform: str = "",
     account_id: str = "",
     query: str = "",
-    channel_id: str = "",
 ) -> str:
-    """
-    根據使用者的問題意圖，檢索課程大綱或具體活動內容相關的資料（講義、照片、其他附件資料等），僅當問題屬於「課程」或「活動」時，才呼叫此工具。
-    若使用者未指定活動內容，請優先回傳近期的活動資料概覽。
-
-    權限控制：
-    - 角色由系統自行查詢綁定資料庫判斷，不依賴呼叫方傳入的 role
-    - 幹部 / 社員 / VIP 社員：可查看完整課程、活動資料
-    - 非社員 / 未綁定者：僅可查看基本課程、活動資訊
-
-    Args:
-        platform: 使用者所在平台（Discord、FB、LINE），請從系統訊息中的 Platform 取得
-        account_id: 使用者在該平台的帳號 ID，請從系統訊息中的 Account ID 取得
-        query: 使用者問題查詢（非必要，需要透過明確的關鍵字來搜尋，像是：課程名稱關鍵字等，否則就留空）。日期請統一使用 YYYY/MM/DD 格式（例如 2026/03/26），查詢日期範圍請用空格分隔兩個日期（例如 2026/03/26 2026/03/30）。短日期如 3/26 也可接受。
-        channel_id: 使用者所在的頻道 ID（白名單頻道內具完整權限）
-    """
+    """Search published Events visible to the caller's membership tier."""
     try:
-        # 確保課程資料已載入（會自動使用快取機制）
-        # 使用 asyncio.to_thread 避免阻塞 event loop（requests.get / time.sleep 都是同步阻塞）
-        await asyncio.to_thread(
-            course_catalog.load_course_data_from_url,
-            COURSE_DATA_URL,
-        )
-
-        # 權限檢查 — 角色一律從綁定 DB 查，不採信 LLM 傳進來的字串
-        has_permission, _ = await check_user_permission(
-            platform, account_id, channel_id
-        )
+        tier = await member_service.get_member_tier(platform, account_id)
         log_event(
             "tool_invoked",
             "mcp_server",
             platform=platform,
             status="started",
-            operation="course_retriever",
+            operation="event_retriever",
             account_id=account_id,
-            channel_id=channel_id,
-            has_permission=has_permission,
+            viewer_tier=int(tier),
             query_length=len(query),
         )
-
-        # 檢查是否有查詢條件
-        if query and query.strip():
-            # 有查詢條件，執行搜尋（包含 jieba 分詞、BM25 等 CPU 密集操作）
-            found, result = await asyncio.to_thread(
-                course_catalog.search_course_data_by_query,
-                query,
-                has_permission,
-            )
-            if found:
-                # 找到匹配結果，返回搜尋結果 + 權限提示
-                return result + course_catalog.get_permission_notice(has_permission)
-            else:
-                # 找不到匹配結果，優先回傳近期課程而非全部
-                if result.startswith("搜尋課程資料時發生錯誤"):
-                    return result
-                upcoming = await asyncio.to_thread(
-                    course_catalog.get_upcoming_courses, has_permission, 2
-                )
-                if upcoming:
-                    return (
-                        f"未找到匹配 '{query}' 的課程資料，以下是近期課程：\n\n{upcoming}"
-                        + course_catalog.get_permission_notice(has_permission)
-                    )
-                else:
-                    all_data = await asyncio.to_thread(
-                        course_catalog.get_all_course_data, has_permission
-                    )
-                    return (
-                        f"未找到匹配 '{query}' 的課程資料，以下是所有可用的課程資料：\n\n{all_data}"
-                        + course_catalog.get_permission_notice(has_permission)
-                    )
-        else:
-            # 沒有查詢條件，返回所有課程資料 + 權限提示
-            all_data = await asyncio.to_thread(
-                course_catalog.get_all_course_data, has_permission
-            )
-            return all_data + course_catalog.get_permission_notice(has_permission)
-
-    except Exception as e:
-        return f"課程資料檢索錯誤: {str(e)}"
+        events = await event_service.search_events(query, int(tier))
+        return event_service.format_events(events) if events else "未找到可查看的活動資訊。"
+    except Exception as error:
+        _log_mcp_tool_failure("event_retriever", error, platform=platform, account_id=account_id)
+        return "活動資料暫時無法取得，請稍後再試。"
 
 
 @mcp.tool(name="qa_retreviler")
@@ -467,82 +390,12 @@ async def update_personal_prompt(
         return f"⚠️ 更新個性備註時發生錯誤：{str(e)}"
 
 
-def _get_upcoming_events(limit: int = 3) -> list[dict]:
-    """Return the next N upcoming events from course data."""
-    from datetime import datetime, timezone, timedelta
-
-    tz_tpe = timezone(timedelta(hours=8))
-    today = datetime.now(tz_tpe).strftime("%Y/%m/%d")
-
-    course_catalog.load_course_data_from_url(COURSE_DATA_URL)
-    df = course_catalog.course_data
-    if df is None or df.empty:
-        return []
-
-    upcoming = []
-    for _, row in df.iterrows():
-        event_date = str(row.get("時間", "")).strip()
-        if not event_date or event_date < today:
-            continue
-        title = str(row.get("社課主題 / 活動名稱", "")).strip()
-        if not title or title.lower() == "nan":
-            continue
-        weekday = str(row.get("星期", "")).strip() if pd.notna(row.get("星期")) else ""
-        event_time = (
-            str(row.get("活動時間", "")).strip()
-            if pd.notna(row.get("活動時間"))
-            else ""
-        )
-        venue = str(row.get("場地", "")).strip() if pd.notna(row.get("場地")) else ""
-        upcoming.append(
-            {
-                "date": event_date,
-                "weekday": weekday,
-                "time": event_time,
-                "venue": venue,
-                "title": title,
-            }
-        )
-
-    upcoming.sort(key=lambda e: e["date"])
-    return upcoming[:limit]
-
-
-def _find_event_by_date(target_date: str) -> dict | None:
-    """Find a single event by exact date (YYYY/MM/DD)."""
-    course_catalog.load_course_data_from_url(COURSE_DATA_URL)
-    df = course_catalog.course_data
-    if df is None or df.empty:
-        return None
-
-    for _, row in df.iterrows():
-        event_date = str(row.get("時間", "")).strip()
-        if event_date == target_date:
-
-            def _c(val):
-                s = str(val).strip() if pd.notna(val) else ""
-                return "" if s.lower() in ("nan", "-", "無") else s
-
-            return {
-                "date": event_date,
-                "weekday": _c(row.get("星期")),
-                "time": _c(row.get("活動時間")),
-                "venue": _c(row.get("場地")),
-                "title": _c(row.get("社課主題 / 活動名稱")),
-                "speaker": _c(row.get("講者")),
-                "outline": _c(row.get("課程大綱")),
-                "target": _c(row.get("課程對象")),
-                "livestream": _c(row.get("是否直播")),
-                "recording": _c(row.get("是否錄影")),
-                "online_link": _c(row.get("線上連結")),
-                "slides": _c(row.get("課程講義")),
-            }
-    return None
-
-
 @mcp.tool(name="notify_members")
 async def notify_members(
-    role: str, event_date: str = "", note: str = "", custom_message: str = ""
+    role: str,
+    event_id: int | None = None,
+    note: str = "",
+    custom_message: str = "",
 ) -> str:
     """
     幹部專用工具：依有效社員的 subscribe 設定發送 Discord、Facebook、LINE 通知。
@@ -551,23 +404,45 @@ async def notify_members(
     系統會以硬邏輯檢查角色字串，非幹部無法使用此功能。
 
     支援兩種通知模式：
-    A. 活動通知：提供 event_date，系統自動帶入完整活動資訊
+    A. 活動通知：提供 event_id，系統自動帶入完整活動資訊
     B. 自訂通知：提供 custom_message，直接發送自訂訊息（不需要選活動）
 
     使用流程：
-    1. 若 event_date 和 custom_message 都未提供，工具會回傳即將舉辦的 3 場活動資訊供選擇
-    2. 幹部可選擇一場活動（提供 event_date），或直接提供 custom_message 發送自訂通知
+    1. 若 event_id 和 custom_message 都未提供，工具會回傳即將舉辦的 3 場活動資訊供選擇
+    2. 幹部可選擇一場活動（提供 event_id），或直接提供 custom_message 發送自訂通知
     3. note 為選填備註，活動通知模式下會附加在訊息最後
 
     Args:
         role: 使用者的角色（系統自動帶入，用於權限檢查）
-        event_date: 要通知的活動日期（格式：YYYY/MM/DD），留空則列出即將舉辦的活動
+        event_id: 要通知的活動 ID，留空則列出即將舉辦的活動
         note: 幹部附註訊息（選填），活動通知時附加在訊息最後
         custom_message: 自訂通知訊息（選填），若提供則直接發送此訊息，不需選擇活動
     """
-    # Hard check: must be staff
     if not notifications.is_staff_role(role):
         return "此功能僅限幹部使用（角色需包含社長、部長或部員）。如果您是幹部但尚未綁定帳號，請先透過 Email 綁定身分。"
+
+    if event_id is not None:
+        event = await event_service.get_published_event_for_staff(event_id)
+        if event is None:
+            return f"找不到 ID 為 {event_id} 的活動。"
+        recipients = [
+            recipient
+            for recipient in await member_service.list_reminder_recipients()
+            if event_service.can_access(event, int(recipient.tier))
+        ]
+        message = event_service.format_event(event)
+        if note.strip():
+            message += f"\n\n附註：{note.strip()}"
+        result = await asyncio.to_thread(
+            notifications.send_notification_to_members, message, recipients
+        )
+        return (
+            f"通知已發送完成！\n\n活動: {event.title} (ID: {event.id})\n"
+            f"通知對象: {result['total_members']} 位符合活動資格的有效社員\n"
+            f"Discord: {result['discord_ok']} 成功, {result['discord_fail']} 失敗\n"
+            f"Facebook: {result['fb_ok']} 成功, {result['fb_fail']} 失敗\n"
+            f"LINE: {result['line_ok']} 成功, {result['line_fail']} 失敗"
+        )
 
     # Mode A: custom message (no event needed)
     if custom_message and custom_message.strip():
@@ -615,80 +490,19 @@ async def notify_members(
         )
         return summary
 
-    # Mode B: event notification
-    if event_date and event_date.strip():
-        event_date = event_date.strip()
-        event = _find_event_by_date(event_date)
-        if not event:
-            return f"找不到日期為 {event_date} 的活動，請確認日期格式為 YYYY/MM/DD。"
-
-        message = notifications.format_staff_notification(
-            event, note=note.strip() if note else ""
-        )
-        log_event(
-            "job_started",
-            "mcp_server",
-            status="started",
-            job="notify_members",
-            notification_type="event",
-            event_date=event_date,
-        )
-
-        recipients = await member_service.list_reminder_recipients()
-        result = await asyncio.to_thread(
-            notifications.send_notification_to_members, message, recipients
-        )
-
-        summary = (
-            f"通知已發送完成！\n\n"
-            f"活動: {event['title']} ({event_date})\n"
-            f"通知對象: {result['total_members']} 位已綁定帳號的有效社員\n"
-            f"Discord: {result['discord_ok']} 成功, {result['discord_fail']} 失敗\n"
-            f"Facebook: {result['fb_ok']} 成功, {result['fb_fail']} 失敗\n"
-            f"LINE: {result['line_ok']} 成功, {result['line_fail']} 失敗"
-        )
-
-        await asyncio.to_thread(
-            notifications.send_discord_channel_message,
-            DISCORD_LOG_CHANNEL_ID,
-            f"```\n[STAFF NOTIFY] {event['title']} ({event_date})\n"
-            f"Discord: {result['discord_ok']}/{result['discord_ok'] + result['discord_fail']}\n"
-            f"Facebook: {result['fb_ok']}/{result['fb_ok'] + result['fb_fail']}\n"
-            f"LINE: {result['line_ok']}/{result['line_ok'] + result['line_fail']}\n```",
-        )
-        failure_count = result["discord_fail"] + result["fb_fail"] + result["line_fail"]
-        sent_count = result["discord_ok"] + result["fb_ok"] + result["line_ok"]
-        log_event(
-            "job_completed",
-            "mcp_server",
-            status="success" if failure_count == 0 else "partial_failure",
-            job="notify_members",
-            notification_type="event",
-            event_date=event_date,
-            recipient_count=result["total_members"],
-            sent_count=sent_count,
-            failed_count=failure_count,
-        )
-        return summary
-
-    # Mode C: no event_date and no custom_message — list upcoming events
-    upcoming = _get_upcoming_events(3)
+    upcoming = await event_service.list_upcoming_events(viewer_tier=3, limit=3)
     if not upcoming:
         return "目前沒有即將舉辦的活動。你也可以直接提供自訂訊息來通知社員。"
 
     lines = ["以下是即將舉辦的活動，請選擇要通知社員的活動：\n"]
-    for i, ev in enumerate(upcoming, 1):
-        parts = [f"{i}. {ev['title']}"]
-        parts.append(f"   日期: {ev['date']} {ev['weekday']}")
-        if ev["time"]:
-            parts.append(f"   時間: {ev['time']}")
-        if ev["venue"]:
-            parts.append(f"   地點: {ev['venue']}")
-        lines.append("\n".join(parts))
+    for event in upcoming:
+        local_start = event.startDate.astimezone(TZ_TPE)
+        details = [f"ID {event.id}: {event.title}", f"日期: {local_start:%Y-%m-%d %H:%M}"]
+        if event.location:
+            details.append(f"地點: {event.location}")
+        lines.append("\n".join(details))
 
-    lines.append(
-        "\n請告訴我要通知哪一場活動（提供日期即可），也可以直接提供自訂訊息來通知社員。"
-    )
+    lines.append("\n請提供活動 ID，或直接提供自訂訊息來通知社員。")
     return "\n\n".join(lines)
 
 

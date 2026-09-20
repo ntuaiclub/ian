@@ -28,25 +28,6 @@ from ian.domain.members import MemberTier, Platform
 from ian.services.member_service import ReminderRecipient
 
 
-def _event(**overrides):
-    event = {
-        "title": "Demo",
-        "date": "2026/03/07",
-        "weekday": "六",
-        "time": "19:00",
-        "venue": "新生",
-        "speaker": "講者",
-        "outline": "大綱",
-        "target": "社員",
-        "livestream": "Y",
-        "recording": "N",
-        "online_link": "https://meet.example",
-        "slides": "https://slides.example",
-    }
-    event.update(overrides)
-    return event
-
-
 @pytest.mark.parametrize(
     ("role", "expected"),
     [
@@ -317,74 +298,3 @@ def test_send_log_delegates_when_configured(monkeypatch):
     notifications.send_log("log message")
 
     assert calls == [("log-channel", "log message")]
-
-
-def test_format_staff_notification_includes_event_details_and_note():
-    message = notifications.format_staff_notification(_event(), note="請準時")
-
-    for expected in (
-        "=== Demo ===",
-        "日期: 2026/03/07 六",
-        "時間: 19:00",
-        "地點: 新生",
-        "講者: 講者",
-        "對象: 社員",
-        "備註: 線上直播",
-        "課程大綱:\n大綱",
-        "線上連結: https://meet.example",
-        "講義: https://slides.example",
-        "--- 附註 ---\n請準時",
-    ):
-        assert expected in message
-
-
-def test_format_staff_notification_omits_empty_optional_fields():
-    message = notifications.format_staff_notification(
-        _event(
-            time="",
-            venue="",
-            speaker="",
-            outline="",
-            target="",
-            livestream="N",
-            recording="N",
-            online_link="",
-            slides="",
-        )
-    )
-
-    for omitted in (
-        "時間:",
-        "地點:",
-        "講者:",
-        "對象:",
-        "備註:",
-        "課程大綱:",
-        "線上連結:",
-        "講義:",
-        "附註",
-    ):
-        assert omitted not in message
-
-
-@pytest.mark.parametrize(
-    ("livestream", "recording", "expected"),
-    [
-        pytest.param("Y", "N", "備註: 線上直播", id="livestream"),
-        pytest.param("N", "Y", "備註: 提供錄影", id="recording"),
-        pytest.param("Y", "Y", "備註: 線上直播 / 提供錄影", id="both"),
-    ],
-)
-def test_format_staff_notification_combines_flags(livestream, recording, expected):
-    message = notifications.format_staff_notification(
-        _event(livestream=livestream, recording=recording)
-    )
-
-    assert expected in message
-
-
-def test_format_staff_notification_truncates_long_outline():
-    message = notifications.format_staff_notification(_event(outline="x" * 301))
-
-    assert f"課程大綱:\n{'x' * 300}..." in message
-    assert "x" * 301 not in message

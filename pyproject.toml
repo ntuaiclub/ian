@@ -26,7 +26,6 @@ dependencies = [
     "sentence-transformers",
     "faiss-gpu-cu12; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "faiss-cpu; sys_platform == 'darwin'",
-    "pandas",
     "python-dotenv",
     "jieba",
     "uvicorn",

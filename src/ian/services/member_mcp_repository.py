@@ -19,17 +19,21 @@
 #
 
 import json
-import re
 from collections import defaultdict
-from datetime import timedelta
-from typing import Any, Protocol
-
-import httpx
-from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
+from typing import Any
 from pydantic import ValidationError
 
 from ian.domain.members import Membership, Platform, User
+from ian.services.payload_mcp_client import (
+    McpToolCaller,
+    PayloadMcpError,
+    PayloadMcpConfigurationError,
+    PayloadMcpSchemaError,
+    PayloadMcpToolError,
+    PayloadMcpTransportError,
+    StreamableHttpMcpToolCaller as SharedStreamableHttpMcpToolCaller,
+    parse_payload_documents,
+)
 
 
 USER_SELECT = {
@@ -57,122 +61,20 @@ UPDATABLE_USER_FIELDS = {
     "subscribe",
     "personal_prompt",
 }
-_JSON_FENCE = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)
 
 
-class MemberRepositoryError(RuntimeError):
-    """Base error for the remote member repository."""
-
-
-class MemberConfigurationError(MemberRepositoryError):
-    """Raised when the MCP repository is not configured."""
-
-
-class MemberTransportError(MemberRepositoryError):
-    """Raised when the MCP transport cannot complete a request."""
-
-
-class MemberToolError(MemberRepositoryError):
-    """Raised when the remote MCP tool reports a failure."""
-
-
-class MemberSchemaError(MemberRepositoryError):
-    """Raised when the MCP response violates the member contract."""
+MemberRepositoryError = PayloadMcpError
+MemberConfigurationError = PayloadMcpConfigurationError
+MemberTransportError = PayloadMcpTransportError
+MemberToolError = PayloadMcpToolError
+MemberSchemaError = PayloadMcpSchemaError
+StreamableHttpMcpToolCaller = SharedStreamableHttpMcpToolCaller
 
 
 class DuplicateMemberError(MemberRepositoryError):
     """Raised when a supposedly unique member lookup returns multiple users."""
 
 
-class McpToolCaller(Protocol):
-    async def call_tool(self, name: str, arguments: dict[str, Any]) -> str: ...
-
-
-class StreamableHttpMcpToolCaller:
-    """Execute one MCP tool call over authenticated Streamable HTTP."""
-
-    def __init__(self, url: str, api_key: str, timeout_seconds: int = 20):
-        self.url = url.strip()
-        self.api_key = api_key.strip()
-        self.timeout_seconds = timeout_seconds
-
-    def _require_config(self) -> None:
-        if not self.url or not self.api_key:
-            raise MemberConfigurationError(
-                "MEMBER_MCP_URL or MEMBER_MCP_API_KEY is not configured"
-            )
-        if self.timeout_seconds <= 0:
-            raise MemberConfigurationError(
-                "MEMBER_MCP_TIMEOUT_SECONDS must be positive"
-            )
-
-    async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
-        self._require_config()
-        timeout = httpx.Timeout(float(self.timeout_seconds))
-        headers = {"Authorization": f"Bearer {self.api_key}"}
-
-        try:
-            async with httpx.AsyncClient(
-                headers=headers,
-                timeout=timeout,
-                follow_redirects=True,
-            ) as http_client:
-                async with streamable_http_client(
-                    self.url,
-                    http_client=http_client,
-                ) as (read_stream, write_stream, _):
-                    async with ClientSession(
-                        read_stream,
-                        write_stream,
-                        read_timeout_seconds=timedelta(seconds=self.timeout_seconds),
-                    ) as session:
-                        await session.initialize()
-                        result = await session.call_tool(
-                            name,
-                            arguments,
-                            read_timeout_seconds=timedelta(
-                                seconds=self.timeout_seconds
-                            ),
-                        )
-        except MemberRepositoryError:
-            raise
-        except Exception as error:
-            raise MemberTransportError(
-                f"MCP tool {name} failed ({type(error).__name__})"
-            ) from error
-
-        if result.isError:
-            raise MemberToolError(f"MCP tool {name} returned an error")
-
-        text_parts = [
-            item.text
-            for item in result.content
-            if getattr(item, "type", None) == "text" and hasattr(item, "text")
-        ]
-        if not text_parts:
-            raise MemberSchemaError(f"MCP tool {name} returned no text content")
-        return "\n".join(text_parts)
-
-
-def parse_payload_documents(text: str) -> list[dict[str, Any]]:
-    """Extract Payload documents from the MCP plugin's fenced JSON response."""
-    documents: list[dict[str, Any]] = []
-    for block in _JSON_FENCE.findall(text):
-        try:
-            value = json.loads(block)
-        except json.JSONDecodeError as error:
-            raise MemberSchemaError("MCP response contains invalid JSON") from error
-
-        values = value if isinstance(value, list) else [value]
-        if not all(isinstance(item, dict) for item in values):
-            raise MemberSchemaError("MCP response JSON must contain documents")
-        documents.extend(values)
-
-    if documents:
-        return documents
-    if re.search(r"Found\s+0\s+document", text, re.IGNORECASE):
-        return []
-    raise MemberSchemaError("MCP response did not contain Payload documents")
 
 
 class MemberMcpRepository:

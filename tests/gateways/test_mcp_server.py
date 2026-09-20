@@ -24,6 +24,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from ian.domain.events import Event
+from ian.domain.members import MemberTier
 from ian.gateways import mcp_server
 
 
@@ -179,11 +181,11 @@ def test_member_tool_wrappers_return_messages_and_handle_exceptions(
 
 def test_notify_members_rejects_non_staff_before_loading_data(monkeypatch):
     monkeypatch.setattr(mcp_server.notifications, "is_staff_role", lambda _role: False)
-    monkeypatch.setattr(
-        mcp_server,
-        "_get_upcoming_events",
-        lambda *_: (_ for _ in ()).throw(AssertionError("course data should not load")),
-    )
+
+    async def fail(*_args, **_kwargs):
+        raise AssertionError("event data should not load")
+
+    monkeypatch.setattr(mcp_server.event_service, "list_upcoming_events", fail)
 
     result = _run(mcp_server.notify_members("一般社員"))
 
@@ -192,6 +194,21 @@ def test_notify_members_rejects_non_staff_before_loading_data(monkeypatch):
 
 def _stub_staff(monkeypatch):
     monkeypatch.setattr(mcp_server.notifications, "is_staff_role", lambda _role: True)
+
+
+def _event(event_id=42, *, tier=0):
+    return Event.model_validate(
+        {
+            "id": event_id,
+            "title": "Agent Evaluation",
+            "startDate": "2026-08-01T19:00:00+08:00",
+            "endDate": "2026-08-01T21:00:00+08:00",
+            "location": "新生",
+            "minimumTier": tier,
+            "slug": "agent-evaluation",
+            "_status": "published",
+        }
+    )
 
 
 def test_notify_members_sends_custom_notification(monkeypatch):
@@ -235,7 +252,15 @@ def test_notify_members_sends_custom_notification(monkeypatch):
 
 def test_notify_members_reports_missing_event_without_sending(monkeypatch):
     _stub_staff(monkeypatch)
-    monkeypatch.setattr(mcp_server, "_find_event_by_date", lambda _date: None)
+
+    async def find_event(_event_id):
+        return None
+
+    monkeypatch.setattr(
+        mcp_server.event_service,
+        "get_published_event_for_staff",
+        find_event,
+    )
     monkeypatch.setattr(
         mcp_server.notifications,
         "send_notification_to_members",
@@ -244,14 +269,14 @@ def test_notify_members_reports_missing_event_without_sending(monkeypatch):
         ),
     )
 
-    result = _run(mcp_server.notify_members("部長", event_date="2026/08/01"))
+    result = _run(mcp_server.notify_members("部長", event_id=42))
 
-    assert result == "找不到日期為 2026/08/01 的活動，請確認日期格式為 YYYY/MM/DD。"
+    assert result == "找不到 ID 為 42 的活動。"
 
 
 def test_notify_members_sends_formatted_event_notification(monkeypatch):
     _stub_staff(monkeypatch)
-    event = {"title": "Agent Evaluation", "date": "2026/08/01"}
+    selected_event = _event(tier=2)
     delivery = {
         "total_members": 3,
         "discord_ok": 3,
@@ -261,99 +286,60 @@ def test_notify_members_sends_formatted_event_notification(monkeypatch):
         "line_ok": 0,
         "line_fail": 0,
     }
-    monkeypatch.setattr(mcp_server, "_find_event_by_date", lambda _date: event)
+    async def find_event(_event_id):
+        return selected_event
+
+    monkeypatch.setattr(
+        mcp_server.event_service,
+        "get_published_event_for_staff",
+        find_event,
+    )
 
     async def list_recipients():
-        return ["members"]
+        return [
+            SimpleNamespace(tier=MemberTier.LECTURE_EXPLORATION),
+            SimpleNamespace(tier=MemberTier.HANDS_ON),
+        ]
 
     monkeypatch.setattr(
         mcp_server.member_service, "list_reminder_recipients", list_recipients
     )
-    monkeypatch.setattr(
-        mcp_server.notifications,
-        "format_staff_notification",
-        lambda value, note: f"formatted:{value['title']}:{note}",
-    )
+    sent = []
     monkeypatch.setattr(
         mcp_server.notifications,
         "send_notification_to_members",
-        lambda message, members: delivery,
+        lambda message, members: sent.append((message, members)) or delivery,
     )
     monkeypatch.setattr(
         mcp_server.notifications, "send_discord_channel_message", lambda *_: True
     )
 
-    result = _run(
-        mcp_server.notify_members("社長", event_date=" 2026/08/01 ", note=" reminder ")
-    )
+    result = _run(mcp_server.notify_members("社長", event_id=42, note=" reminder "))
 
-    assert "活動: Agent Evaluation (2026/08/01)" in result
+    assert "活動: Agent Evaluation (ID: 42)" in result
     assert "Discord: 3 成功, 0 失敗" in result
+    assert len(sent[0][1]) == 1
+    assert sent[0][1][0].tier is MemberTier.HANDS_ON
+    assert "附註：reminder" in sent[0][0]
 
 
-@pytest.mark.parametrize(
-    ("upcoming", "expected_parts"),
-    [
-        pytest.param([], ("目前沒有即將舉辦的活動",), id="no-upcoming-events"),
-        pytest.param(
-            [
-                {
-                    "title": "Agent Evaluation",
-                    "date": "2026/08/01",
-                    "weekday": "六",
-                    "time": "19:00",
-                    "venue": "新生",
-                }
-            ],
-            ("1. Agent Evaluation", "日期: 2026/08/01 六", "時間: 19:00", "地點: 新生"),
-            id="list-upcoming-events",
-        ),
-    ],
-)
-def test_notify_members_lists_upcoming_events(monkeypatch, upcoming, expected_parts):
+def test_notify_members_lists_upcoming_events_with_ids(monkeypatch):
     _stub_staff(monkeypatch)
-    monkeypatch.setattr(mcp_server, "_get_upcoming_events", lambda limit: upcoming)
+
+    async def list_upcoming_events(*_args, **_kwargs):
+        return [_event()]
+
+    monkeypatch.setattr(
+        mcp_server.event_service,
+        "list_upcoming_events",
+        list_upcoming_events,
+    )
 
     result = _run(mcp_server.notify_members("部員"))
 
-    assert all(part in result for part in expected_parts)
-
-
-def test_course_retriever_log_redacts_query_and_identifiers(monkeypatch, capsys):
-    monkeypatch.setattr(
-        mcp_server.course_catalog,
-        "load_course_data_from_url",
-        lambda *_: None,
-    )
-
-    async def allow(*_args):
-        return True, "社員"
-
-    monkeypatch.setattr(mcp_server, "check_user_permission", allow)
-    monkeypatch.setattr(
-        mcp_server.course_catalog,
-        "get_all_course_data",
-        lambda *_: "course data",
-    )
-
-    result = _run(
-        mcp_server.search_course_chunks_by_semantics(
-            "Discord",
-            "private-account",
-            "",
-            "private-channel",
-        )
-    )
-
-    captured = capsys.readouterr()
-    assert result.startswith("course data")
-    assert captured.out == ""
-    entry = json.loads(captured.err)
-    assert entry["event"] == "tool_invoked"
-    assert entry["account_id"].startswith("sha256:")
-    assert entry["channel_id"].startswith("sha256:")
-    assert "private-account" not in json.dumps(entry)
-    assert "private-channel" not in json.dumps(entry)
+    assert "ID 42: Agent Evaluation" in result
+    assert "日期: 2026-08-01 19:00" in result
+    assert "地點: 新生" in result
 
 
 def test_stdio_entrypoint_emits_structured_log_without_stdout(monkeypatch, capsys):
