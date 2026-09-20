@@ -25,7 +25,6 @@ from datetime import date, datetime, timedelta
 from ian.application.reminders import ReminderLoadError
 from ian.bootstrap import get_application
 from ian.domain.time import TZ_TPE
-from ian.services import notifications
 from ian.utils.logging import elapsed_ms, log_event
 
 REMINDER_HOUR = 19
@@ -36,6 +35,7 @@ _FAILURE_NOTIFICATIONS = {
 }
 application = get_application()
 reminder_service = application.reminders
+operational_notifier = application.operational_notifications
 
 
 def seconds_until_next_run(
@@ -67,7 +67,11 @@ def _report_job_failure(
         target_date=target_date,
         error=error,
     )
-    notifications.send_log(f"```\n[REMINDER] {_FAILURE_NOTIFICATIONS[stage]}\n```")
+    asyncio.run(
+        operational_notifier.send_log(
+            f"```\n[REMINDER] {_FAILURE_NOTIFICATIONS[stage]}\n```"
+        )
+    )
 
 
 def run_once(target_date: str | None = None, dry: bool = False):
@@ -152,7 +156,7 @@ def run_once(target_date: str | None = None, dry: bool = False):
         sent_count=delivery.sent_count,
         failed_count=delivery.failed_count,
     )
-    notifications.send_log(summary)
+    asyncio.run(operational_notifier.send_log(summary))
 
 
 def daemon_loop():
@@ -186,4 +190,4 @@ def daemon_loop():
                 stage="daemon_loop",
                 error=e,
             )
-            notifications.send_log("```\n[REMINDER] ERROR\n```")
+            asyncio.run(operational_notifier.send_log("```\n[REMINDER] ERROR\n```"))

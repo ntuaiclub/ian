@@ -53,7 +53,7 @@ def clear_session_if_timeout(session_id: str, current_timestamp: float):
 def upsert_session(
     session_id: str,
     user_name: str,
-    user_role: str,
+    user_role: str | list[str],
     channel_id: str,
     current_timestamp: float,
 ) -> tuple[dict, bool]:

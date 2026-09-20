@@ -22,7 +22,7 @@ from typing import Any, Dict
 
 from langchain_core.callbacks import BaseCallbackHandler
 
-from ian.services.agent.logging import add_log
+from ian.infrastructure.agent.logging import add_log
 from ian.utils.logging import redact_user_content
 
 

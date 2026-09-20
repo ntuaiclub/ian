@@ -214,7 +214,7 @@ Python runtime 不引入 JavaScript converter；Payload 官方 converters 仍可
 
 ## 9. 共用 MCP Transport
 
-Member 與 Event 使用同一個 ntuai.dev endpoint。將以下內容從 `member_mcp_repository.py` 抽到 `src/ian/services/payload_mcp_client.py`：
+Member 與 Event 使用同一個 ntuai.dev endpoint。共用 transport 位於 `src/ian/infrastructure/payload_mcp/client.py`：
 
 - `McpToolCaller` protocol
 - `StreamableHttpMcpToolCaller`
@@ -242,7 +242,7 @@ Ian API key 最小權限：
 
 ## 10. EventMcpRepository
 
-新增 `src/ian/services/event_mcp_repository.py`。
+Event adapter 位於 `src/ian/infrastructure/payload_mcp/event_repository.py`。
 
 ### 10.1 Select allowlist
 
@@ -306,7 +306,7 @@ async def list_published(
 
 ## 11. EventService
 
-新增 `src/ian/services/event_service.py`，負責 use case 與權限：
+Event use case 位於 `src/ian/application/events.py`，負責 use case 與權限：
 
 ```python
 async def get_event(event_id: int, viewer_tier: int) -> Event | None
@@ -445,9 +445,9 @@ Event repository／service 至少記錄：
 ### 新增
 
 - `src/ian/domain/events.py`
-- `src/ian/services/payload_mcp_client.py`
-- `src/ian/services/event_mcp_repository.py`
-- `src/ian/services/event_service.py`
+- `src/ian/infrastructure/payload_mcp/client.py`
+- `src/ian/infrastructure/payload_mcp/event_repository.py`
+- `src/ian/application/events.py`
 - `tests/domain/test_events.py`
 - `tests/services/test_payload_mcp_client.py`
 - `tests/services/test_event_mcp_repository.py`
@@ -457,12 +457,12 @@ Event repository／service 至少記錄：
 
 - `src/ian/config.py`
 - `src/ian/domain/reminders.py`
-- `src/ian/services/member_mcp_repository.py`
-- `src/ian/services/member_service.py`
+- `src/ian/infrastructure/payload_mcp/member_repository.py`
+- `src/ian/application/members.py`
 - `src/ian/services/reminder_runner.py`
-- `src/ian/services/notifications.py`
+- `src/ian/infrastructure/notifications/adapters.py`
 - `src/ian/gateways/mcp_server.py`
-- `src/ian/services/agent/prompt.py`
+- `src/ian/infrastructure/agent/prompt.py`
 - `.env.example`
 - `ARCHITECTURE.md`
 - `CONTRIBUTION.md`

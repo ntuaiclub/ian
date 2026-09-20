@@ -34,13 +34,13 @@ from ian.config import GOOGLE_API_KEY
 from ian.domain.injection import INJECTION_REJECTION_MSG, detect_prompt_injection
 from ian.domain.members import User
 from ian.domain.urls import URL_PLACEHOLDER, validate_urls_in_response
-from ian.services.agent.callbacks import (
+from ian.infrastructure.agent.callbacks import (
     DiscordLogCallbackHandler,
     extract_text_from_output,
 )
-from ian.services.agent.logging import add_log, start_log_processor
-from ian.services.agent.prompt import SYS_PROMPT
-from ian.services.agent.sessions import (
+from ian.infrastructure.agent.logging import add_log, start_log_processor
+from ian.infrastructure.agent.prompt import SYS_PROMPT
+from ian.infrastructure.agent.sessions import (
     clear_session_if_timeout,
     get_session_agent_and_channel,
     reset_session_agent,
@@ -48,7 +48,7 @@ from ian.services.agent.sessions import (
     set_session_agent,
     upsert_session,
 )
-from ian.services.agent.usage import check_and_update_usage
+from ian.infrastructure.agent.usage import check_and_update_usage
 from ian.utils.logging import (
     elapsed_ms,
     hash_identifier,
@@ -76,7 +76,18 @@ dispatcher_lock = threading.Lock()
 MCP tools with single agent executor
 """
 request_queue: Queue[
-    tuple[str, str, str, str, float, str, str, str, User | None, Future]
+    tuple[
+        str,
+        str,
+        str,
+        str | list[str],
+        float,
+        str,
+        str,
+        str,
+        User | None,
+        Future,
+    ]
 ] = Queue()
 
 
@@ -476,7 +487,7 @@ async def chat_with_agent(
     session_id: str,
     user_name: str,
     question: str,
-    user_role: str,
+    user_role: str | list[str],
     timestamp: float,
     channel_id: str,
     platform: str = "Discord",

@@ -20,11 +20,12 @@
 
 from dataclasses import dataclass
 
+from ian.application.agent import AgentPort, AgentService
 from ian.application.checkins import CheckinLinkService
 from ian.application.events import EventService
 from ian.application.member_notifications import MemberNotificationService
 from ian.application.members import MemberService
-from ian.application.notifications import NotificationSender
+from ian.application.notifications import NotificationSender, OperationalNotifier
 from ian.application.reminders import DailyReminderService
 from ian.infrastructure.payload_mcp.client import (
     McpToolCaller,
@@ -36,15 +37,23 @@ from ian.infrastructure.payload_mcp.event_repository import (
 from ian.infrastructure.payload_mcp.member_repository import (
     PayloadMcpMemberRepository,
 )
+from ian.infrastructure.notifications.adapters import (
+    DiscordOperationalNotifier,
+    PlatformNotificationSender,
+)
+from ian.infrastructure.notifications.discord import DiscordHttpClient
+from ian.infrastructure.agent.langgraph import LangGraphAgentAdapter
 
 
 @dataclass(frozen=True)
 class ApplicationServices:
+    agent: AgentService
     events: EventService
     members: MemberService
     checkins: CheckinLinkService
     reminders: DailyReminderService
     member_notifications: MemberNotificationService
+    operational_notifications: OperationalNotifier
 
 
 _default_application: ApplicationServices | None = None
@@ -53,8 +62,12 @@ _default_application: ApplicationServices | None = None
 def build_application(
     caller: McpToolCaller | None = None,
     notification_sender: NotificationSender | None = None,
+    operational_notifier: OperationalNotifier | None = None,
+    agent_adapter: AgentPort | None = None,
 ) -> ApplicationServices:
     """Compose application services without performing network I/O."""
+    discord: DiscordHttpClient | None = None
+    agent_log_channel_id = 0
     if caller is None:
         from ian.config import (
             NTUAI_MCP_API_KEY,
@@ -68,14 +81,41 @@ def build_application(
             NTUAI_MCP_TIMEOUT_SECONDS,
         )
 
-    if notification_sender is None:
-        from ian.services.notifications import PlatformNotificationSender
+    if (
+        notification_sender is None
+        or operational_notifier is None
+        or agent_adapter is None
+    ):
+        from ian.config import (
+            DISCORD_BOT_TOKEN,
+            DISCORD_LOG_CHANNEL_ID,
+            DISCORD_LOG_CHANNEL_ID_INT,
+            LINE_CHANNEL_ACCESS_TOKEN,
+            PAGE_ACCESS_TOKEN,
+        )
 
-        notification_sender = PlatformNotificationSender()
+        discord = DiscordHttpClient(DISCORD_BOT_TOKEN)
+        agent_log_channel_id = DISCORD_LOG_CHANNEL_ID_INT
+        if notification_sender is None:
+            notification_sender = PlatformNotificationSender(
+                discord,
+                page_access_token=PAGE_ACCESS_TOKEN,
+                line_channel_access_token=LINE_CHANNEL_ACCESS_TOKEN,
+            )
+        if operational_notifier is None:
+            operational_notifier = DiscordOperationalNotifier(
+                discord,
+                bot_token=DISCORD_BOT_TOKEN,
+                log_channel_id=DISCORD_LOG_CHANNEL_ID,
+            )
 
     events = EventService(PayloadMcpEventRepository(caller))
     members = MemberService(PayloadMcpMemberRepository(caller))
+    if agent_adapter is None:
+        assert discord is not None
+        agent_adapter = LangGraphAgentAdapter(discord, agent_log_channel_id)
     return ApplicationServices(
+        agent=AgentService(agent_adapter),
         events=events,
         members=members,
         checkins=CheckinLinkService(members),
@@ -85,6 +125,7 @@ def build_application(
             members,
             notification_sender,
         ),
+        operational_notifications=operational_notifier,
     )
 
 

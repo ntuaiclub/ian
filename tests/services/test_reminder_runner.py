@@ -57,7 +57,11 @@ def test_run_once_reports_dependency_failure(monkeypatch, stage):
         raise ReminderLoadError(stage, RuntimeError("unavailable"))
 
     monkeypatch.setattr(reminder_runner.reminder_service, "run", fail)
-    monkeypatch.setattr(reminder_runner.notifications, "send_log", logs.append)
+
+    async def send_log(message):
+        logs.append(message)
+
+    monkeypatch.setattr(reminder_runner.operational_notifier, "send_log", send_log)
 
     reminder_runner.run_once(target_date=TARGET_DATE)
 
@@ -91,7 +95,11 @@ def test_run_once_logs_completed_delivery(monkeypatch):
         ReminderRunResult("completed", ("Event 1", "Event 2"), 2, delivery),
     )
     logs = []
-    monkeypatch.setattr(reminder_runner.notifications, "send_log", logs.append)
+
+    async def send_log(message):
+        logs.append(message)
+
+    monkeypatch.setattr(reminder_runner.operational_notifier, "send_log", send_log)
 
     reminder_runner.run_once(target_date=TARGET_DATE)
 

@@ -18,6 +18,11 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import ian.bootstrap as bootstrap
@@ -40,8 +45,34 @@ class FakeSender:
         raise AssertionError("composition must not send notifications")
 
 
+class FakeOperationalNotifier:
+    async def send_channel(self, channel_id, message):
+        raise AssertionError("composition must not send operational messages")
+
+    async def send_log(self, message):
+        raise AssertionError("composition must not send operational logs")
+
+
+class FakeAgentAdapter:
+    async def generate(self, request):
+        raise AssertionError("composition must not invoke the agent")
+
+    async def clear(self, session_id):
+        raise AssertionError("composition must not clear sessions")
+
+    async def startup(self):
+        raise AssertionError("composition must not start agent threads")
+
+
 def test_build_application_composes_dependencies_without_io():
-    application = build_application(FakeCaller(), FakeSender())
+    operational = FakeOperationalNotifier()
+    agent = FakeAgentAdapter()
+    application = build_application(
+        FakeCaller(),
+        FakeSender(),
+        operational,
+        agent,
+    )
 
     assert isinstance(application.events.repository, PayloadMcpEventRepository)
     assert isinstance(application.members.repository, PayloadMcpMemberRepository)
@@ -50,6 +81,8 @@ def test_build_application_composes_dependencies_without_io():
     assert application.reminders.members is application.members
     assert application.member_notifications.events is application.events
     assert application.member_notifications.members is application.members
+    assert application.operational_notifications is operational
+    assert application.agent.adapter is agent
 
 
 def test_get_application_builds_default_graph_once(monkeypatch):
@@ -65,3 +98,81 @@ def test_get_application_builds_default_graph_once(monkeypatch):
     assert bootstrap.get_application() is application
     assert bootstrap.get_application() is application
     assert calls == [True]
+
+
+def test_default_composition_keeps_agent_runtime_lazy():
+    project_root = Path(__file__).resolve().parents[1]
+    src_root = project_root / "src"
+    script = """
+import json
+import sys
+import threading
+import socket
+
+def fail_network(*args, **kwargs):
+    raise AssertionError("bootstrap must not perform network I/O")
+
+socket.create_connection = fail_network
+
+modules_before = set(sys.modules)
+threads_before = {thread.ident for thread in threading.enumerate()}
+
+import ian.bootstrap as bootstrap
+
+application = bootstrap.get_application()
+modules_after = set(sys.modules)
+heavy_prefixes = (
+    "langchain",
+    "langchain_core",
+    "langchain_google_genai",
+    "langchain_mcp_adapters",
+    "langgraph",
+)
+payload = {
+    "adapter_type": type(application.agent.adapter).__name__,
+    "heavy_modules": sorted(
+        module
+        for module in modules_after - modules_before
+        if module in heavy_prefixes or module.startswith(
+            tuple(f"{prefix}." for prefix in heavy_prefixes)
+        )
+    ),
+    "eager_agent_modules": sorted(
+        module
+        for module in (
+            "ian.infrastructure.agent.logging",
+            "ian.infrastructure.agent.runtime",
+            "ian.infrastructure.agent.sessions",
+        )
+        if module in modules_after
+    ),
+    "new_threads": sorted(
+        thread.name
+        for thread in threading.enumerate()
+        if thread.ident not in threads_before
+    ),
+}
+print(json.dumps(payload))
+"""
+    env = os.environ.copy()
+    existing_pythonpath = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = os.pathsep.join(
+        part for part in (str(src_root), existing_pythonpath) if part
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        cwd=project_root,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    payload = json.loads(completed.stdout)
+
+    assert payload == {
+        "adapter_type": "LangGraphAgentAdapter",
+        "heavy_modules": [],
+        "eager_agent_modules": [],
+        "new_threads": [],
+    }

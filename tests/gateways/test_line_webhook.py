@@ -25,7 +25,7 @@ from types import SimpleNamespace
 import pytest
 
 from ian.gateways import line_webhook
-from ian.gateways.agent_bridge import AgentMessageResult
+from ian.application.agent import AgentResult
 
 
 def _event(text, *, group_id=None):
@@ -121,7 +121,7 @@ def _stub_line_task(monkeypatch, agent_result):
     replies = []
     history = []
 
-    async def fake_agent(**_kwargs):
+    async def fake_agent(_request):
         return agent_result
 
     async def find_member(*_args):
@@ -131,7 +131,7 @@ def _stub_line_task(monkeypatch, agent_result):
     monkeypatch.setattr(
         line_webhook.member_service, "find_user_by_platform", find_member
     )
-    monkeypatch.setattr(line_webhook, "run_agent_message_flow", fake_agent)
+    monkeypatch.setattr(line_webhook.agent_service, "handle", fake_agent)
     monkeypatch.setattr(
         line_webhook.line_bot_api,
         "reply_message",
@@ -154,11 +154,15 @@ def _stub_line_task(monkeypatch, agent_result):
     "agent_result",
     [
         pytest.param(
-            AgentMessageResult(text="[NO_RESPONSE]", should_reply=False),
+            AgentResult(text="[NO_RESPONSE]", should_reply=False),
             id="agent-no-response",
         ),
         pytest.param(
-            AgentMessageResult(text="已達今日使用上限", should_reply=True),
+            AgentResult(
+                text="已達今日使用上限",
+                should_reply=True,
+                reason="usage_limit",
+            ),
             id="usage-limit",
         ),
     ],
@@ -186,7 +190,7 @@ def test_process_line_message_task_replies_with_message_chunks(monkeypatch, caps
     response = "x" * 2001
     replies, history = _stub_line_task(
         monkeypatch,
-        AgentMessageResult(text=response, should_reply=True),
+        AgentResult(text=response, should_reply=True),
     )
 
     asyncio.run(
@@ -212,7 +216,7 @@ def test_process_line_message_task_falls_back_to_push_message(
 ):
     replies, history = _stub_line_task(
         monkeypatch,
-        AgentMessageResult(text="private agent reply", should_reply=True),
+        AgentResult(text="private agent reply", should_reply=True),
     )
     monkeypatch.setattr(
         line_webhook.line_bot_api,
@@ -251,7 +255,7 @@ def test_process_line_message_task_logs_push_fallback_failure_without_private_da
 ):
     _replies, history = _stub_line_task(
         monkeypatch,
-        AgentMessageResult(text="private agent reply", should_reply=True),
+        AgentResult(text="private agent reply", should_reply=True),
     )
     monkeypatch.setattr(
         line_webhook.line_bot_api,

@@ -23,10 +23,10 @@ import json
 
 import pytest
 
-from ian.domain.urls import URL_PLACEHOLDER
 from ian.domain.injection import INJECTION_REJECTION_MSG
-from ian.services.agent import runtime
-from ian.services.agent.runtime import _validate_agent_response_urls
+from ian.domain.urls import URL_PLACEHOLDER
+from ian.infrastructure.agent import runtime
+from ian.infrastructure.agent.runtime import _validate_agent_response_urls
 
 
 def test_agent_runtime_allows_prompt_and_tool_result_urls():

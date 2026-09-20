@@ -77,10 +77,29 @@ def test_application_does_not_depend_on_adapters_or_external_sdks():
     assert violations == []
 
 
-def test_payload_mcp_adapters_are_only_composed_in_bootstrap():
+def test_infrastructure_does_not_depend_on_services_gateways_or_bootstrap():
+    forbidden = (
+        "ian.bootstrap",
+        "ian.gateways",
+        "ian.services",
+    )
+    violations = []
+    for path in sorted((SRC_ROOT / "infrastructure").rglob("*.py")):
+        for module in imported_modules(path):
+            if module.startswith(forbidden):
+                violations.append(f"{path}: {module}")
+
+    assert violations == []
+
+
+def test_concrete_adapters_are_only_composed_in_bootstrap():
     constructor_names = {
+        "DiscordHttpClient",
+        "DiscordOperationalNotifier",
+        "LangGraphAgentAdapter",
         "PayloadMcpEventRepository",
         "PayloadMcpMemberRepository",
+        "PlatformNotificationSender",
         "StreamableHttpMcpToolCaller",
     }
     violations = []
@@ -102,13 +121,17 @@ def test_payload_mcp_adapters_are_only_composed_in_bootstrap():
     assert violations == []
 
 
-def test_legacy_event_member_service_modules_are_removed():
+def test_legacy_service_and_gateway_modules_are_removed():
     legacy_paths = [
+        SRC_ROOT / "services/agent",
         SRC_ROOT / "services/event_service.py",
         SRC_ROOT / "services/member_service.py",
         SRC_ROOT / "services/event_mcp_repository.py",
         SRC_ROOT / "services/member_mcp_repository.py",
         SRC_ROOT / "services/payload_mcp_client.py",
+        SRC_ROOT / "services/notifications.py",
+        SRC_ROOT / "services/discord_api.py",
+        SRC_ROOT / "gateways/agent_bridge.py",
     ]
 
     assert [str(path) for path in legacy_paths if path.exists()] == []
@@ -119,6 +142,21 @@ def test_gateways_do_not_import_payload_mcp_adapters():
     for path in sorted((SRC_ROOT / "gateways").rglob("*.py")):
         for module in imported_modules(path):
             if module.startswith("ian.infrastructure.payload_mcp"):
+                violations.append(f"{path}: {module}")
+
+    assert violations == []
+
+
+def test_gateways_do_not_import_concrete_agent_or_notification_adapters():
+    forbidden = (
+        "ian.infrastructure.agent",
+        "ian.infrastructure.notifications",
+        "ian.services.agent",
+    )
+    violations = []
+    for path in sorted((SRC_ROOT / "gateways").rglob("*.py")):
+        for module in imported_modules(path):
+            if module.startswith(forbidden):
                 violations.append(f"{path}: {module}")
 
     assert violations == []

@@ -25,20 +25,17 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 
+from ian.application.agent import AgentRequest
 from ian.bootstrap import get_application
 from ian.config import DISCORD_BOT_TOKEN
-from ian.gateways.agent_bridge import run_agent_message_flow
 from ian.gateways.messaging_common import get_current_time
-from ian.services.agent import (
-    start_log_processor,
-    send_startup_notification,
-    clear_session,
-)
 from ian.utils.logging import elapsed_ms, hash_identifier, log_event
 
 UPLOAD_DIR = "uploads"
 CHAT_HISTORY_FILE = os.path.join(UPLOAD_DIR, "chat_history.jsonl")
-member_service = get_application().members
+application = get_application()
+agent_service = application.agent
+member_service = application.members
 
 
 def _interaction_correlation_id(interaction: discord.Interaction) -> str:
@@ -113,16 +110,18 @@ class FAQView(discord.ui.View):
                 correlation_id=correlation_id,
                 user_id=str(user.id),
             )
-            agent_result = await run_agent_message_flow(
-                session_id=user.name,
-                user_name=user.display_name,
-                user_message=prompt,
-                roles=roles,
-                current_time=current_time,
-                channel_id=str(interaction.channel_id),
-                platform="Discord",
-                account_id=str(user.id),
-                member=member,
+            agent_result = await agent_service.handle(
+                AgentRequest(
+                    session_id=user.name,
+                    user_name=user.display_name,
+                    question=prompt,
+                    user_role=roles,
+                    timestamp=current_time["timestamp"],
+                    channel_id=str(interaction.channel_id),
+                    platform="Discord",
+                    account_id=str(user.id),
+                    member=member,
+                )
             )
             if not agent_result.should_reply:
                 log_event(
@@ -208,8 +207,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 @bot.event
 async def on_ready():
     await bot.tree.sync()
-    start_log_processor()
-    send_startup_notification()
+    await agent_service.startup()
     log_event(
         "service_ready",
         "discord_bot",
@@ -255,16 +253,18 @@ async def ask(interaction: discord.Interaction, prompt: str):
             correlation_id=correlation_id,
             user_id=str(user.id),
         )
-        agent_result = await run_agent_message_flow(
-            session_id=user.name,
-            user_name=user.display_name,
-            user_message=prompt,
-            roles=roles,
-            current_time=current_time,
-            channel_id=str(interaction.channel_id),
-            platform="Discord",
-            account_id=str(user.id),
-            member=member,
+        agent_result = await agent_service.handle(
+            AgentRequest(
+                session_id=user.name,
+                user_name=user.display_name,
+                question=prompt,
+                user_role=roles,
+                timestamp=current_time["timestamp"],
+                channel_id=str(interaction.channel_id),
+                platform="Discord",
+                account_id=str(user.id),
+                member=member,
+            )
         )
         if not agent_result.should_reply:
             log_event(
@@ -318,7 +318,7 @@ async def faq(interaction: discord.Interaction):
 async def clear(interaction: discord.Interaction):
     correlation_id = _interaction_correlation_id(interaction)
     try:
-        await clear_session(interaction.user.name)
+        await agent_service.clear(interaction.user.name)
         await interaction.response.send_message(
             "🫥 已清除記憶，請開始新的對話。\nCleared. Please start a new conversation."
         )

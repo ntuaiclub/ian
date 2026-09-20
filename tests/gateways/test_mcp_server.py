@@ -197,10 +197,15 @@ def test_notify_members_sends_custom_notification(monkeypatch):
         "notify_custom",
         notify_custom,
     )
+
+    async def send_channel(channel, message):
+        logs.append((channel, message))
+        return True
+
     monkeypatch.setattr(
-        mcp_server.notifications,
-        "send_discord_channel_message",
-        lambda channel, message: logs.append((channel, message)) or True,
+        mcp_server.operational_notifier,
+        "send_channel",
+        send_channel,
     )
 
     result = _run(

@@ -26,6 +26,7 @@ import requests
 from linebot import LineBotApi, WebhookHandler
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
+from ian.application.agent import AgentRequest
 from ian.bootstrap import get_application
 from ian.config import (
     LINE_ALLOWED_GROUPS,
@@ -33,7 +34,6 @@ from ian.config import (
     LINE_CHANNEL_SECRET,
 )
 from ian.domain.messages import split_message_chunks
-from ian.gateways.agent_bridge import run_agent_message_flow
 from ian.gateways.messaging_common import (
     get_current_time,
     save_chat_history,
@@ -42,7 +42,9 @@ from ian.utils.logging import elapsed_ms, hash_identifier, log_event
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 line_handler = WebhookHandler(LINE_CHANNEL_SECRET)
-member_service = get_application().members
+application = get_application()
+agent_service = application.agent
+member_service = application.members
 
 
 def get_line_user_profile(user_id):
@@ -170,16 +172,18 @@ async def process_line_message_task(
             channel_id=chat_id,
             message_length=len(user_message),
         )
-        agent_result = await run_agent_message_flow(
-            session_id=user_id,
-            user_name=user_name,
-            user_message=user_message,
-            roles=roles,
-            current_time=current_time,
-            channel_id=str(chat_id),
-            platform="LINE",
-            account_id=user_id,
-            member=member,
+        agent_result = await agent_service.handle(
+            AgentRequest(
+                session_id=user_id,
+                user_name=user_name,
+                question=user_message,
+                user_role=roles,
+                timestamp=current_time["timestamp"],
+                channel_id=str(chat_id),
+                platform="LINE",
+                account_id=user_id,
+                member=member,
+            )
         )
 
         if not agent_result.should_reply:
@@ -195,7 +199,7 @@ async def process_line_message_task(
             )
             return
 
-        if "已達今日使用上限" in agent_result.text:
+        if agent_result.reason == "usage_limit":
             log_event(
                 "no_response",
                 "line_webhook",

@@ -21,7 +21,7 @@
 import asyncio
 import json
 
-from ian.services.agent import callbacks, sessions, usage
+from ian.infrastructure.agent import callbacks, sessions, usage
 
 
 def test_agent_callbacks_redact_tool_payloads_and_error_messages(monkeypatch):

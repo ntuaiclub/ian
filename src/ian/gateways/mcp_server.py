@@ -35,26 +35,19 @@ from ian.config import (
 )
 from ian.bootstrap import get_application
 from ian.domain.time import TZ_TPE
-from ian.services import notifications
 from ian.services import rag
 from ian.utils.logging import log_event
 
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 
-
-# ---------------------------------------------------------------------------
-# MCP server instance
-# ---------------------------------------------------------------------------
 mcp = FastMCP(host=MCP_HOST, port=MCP_PORT, stateless_http=True)
 
-# ---------------------------------------------------------------------------
-# Permission control
-# ---------------------------------------------------------------------------
 application = get_application()
 event_service = application.events
 member_service = application.members
 member_notification_service = application.member_notifications
 checkin_service = application.checkins
+operational_notifier = application.operational_notifications
 
 
 def initialize_dependencies() -> None:
@@ -215,8 +208,7 @@ async def notify_staff(
             context_preview = context[:500] + "..." if len(context) > 500 else context
             notification += f"\n💬 **相關上下文**：\n{context_preview}"
 
-        success = await asyncio.to_thread(
-            notifications.send_discord_channel_message,
+        success = await operational_notifier.send_channel(
             STAFF_NOTIFICATION_CHANNEL_ID,
             notification,
         )
@@ -433,8 +425,7 @@ async def notify_members(
                 account_id,
                 custom_message,
             )
-            await asyncio.to_thread(
-                notifications.send_discord_channel_message,
+            await operational_notifier.send_channel(
                 DISCORD_LOG_CHANNEL_ID,
                 f"```\n[STAFF NOTIFY] Custom message\n"
                 f"Discord: {delivery.discord_ok}/{delivery.discord_ok + delivery.discord_fail}\n"

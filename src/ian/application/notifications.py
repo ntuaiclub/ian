@@ -28,6 +28,12 @@ class NotificationSender(Protocol):
     async def send(self, recipient: ReminderRecipient, message: str) -> bool: ...
 
 
+class OperationalNotifier(Protocol):
+    async def send_channel(self, channel_id: str | int, message: str) -> bool: ...
+
+    async def send_log(self, message: str) -> None: ...
+
+
 @dataclass
 class DeliveryReport:
     total_members: int = 0

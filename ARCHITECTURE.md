@@ -24,9 +24,9 @@
                │                    └──────────────────────────┘
            ▼
   ┌──────────────────────────┐
-  │ Agent Runtime            │
-  │ ian.services             │
-  │ - agent/                 │
+  │ Agent Infrastructure     │
+  │ ian.infrastructure.agent │
+  │ - runtime / sessions     │
   │ - LangGraph ReAct        │
   │ - Gemini 3 Flash         │
   └──────────────────────────┘
@@ -36,10 +36,11 @@
 
 - **Domain 層**：`ian.domain` 保存 Event、Member 與純規則，不依賴環境設定或外部 SDK。
 - **Application 層**：`ian.application` 保存 Event、Member、提醒與社員通知 use cases，以及 application 所擁有的 repository／notification Protocol。
-- **Infrastructure 層**：`ian.infrastructure.payload_mcp` 實作 Payload MCP transport 與 Event／Member repository adapters。
-- **Bootstrap**：`ian.bootstrap` 是 concrete repositories、application services 與 notification sender 的唯一組裝點；組裝本身不執行網路 I/O。
+- **Infrastructure 層**：`ian.infrastructure` 實作 Payload MCP repositories、Discord／Facebook／LINE notification adapters，以及完整的 LangGraph Agent adapter/runtime（prompt、callbacks、sessions、usage 與 Discord logging）。
+- **Services 層**：`ian.services` 暫留 Hybrid RAG 與 process runners；不包含 Agent/LangGraph 實作。
+- **Bootstrap**：`ian.bootstrap` 是 repositories、notification adapters、Agent adapter 與 application services 的唯一組裝點；組裝本身不執行網路 I/O、啟動 thread 或傳送通知。
 - **Gateway 層**：各平台入口。`ian.gateways.discord_bot` 處理 Discord Slash Commands；`ian.gateways.webhook_server` (Flask) 負責 Webhook route wiring，並委派給 `ian.gateways.facebook_webhook` 與 `ian.gateways.line_webhook` 處理 Facebook Messenger / LINE 平台細節。
-- **Host Agent Client**：`ian.services.agent` 使用 LangGraph `create_react_agent` 搭配 Google Gemini 3 Flash，透過 MCP 協定調用工具，並管理每位使用者的獨立對話 session。
+- **Host Agent Client**：`ian.application.agent.AgentService` 只依賴 `AgentPort`；`ian.infrastructure.agent.LangGraphAgentAdapter` 封裝 queue-based LangGraph runtime、Gemini、MCP tools 與 session lifecycle。
 - **MCP Tool Server**：`ian.gateways.mcp_server` 以 FastMCP 框架透過 streamable HTTP 提供 RAG 搜尋、課程查詢、幹部通知、社員綁定、簽到碼產生、訂閱管理、個性備註等工具。
 - **Payload MCP**：application 的 repository Protocol 由 `ian.infrastructure.payload_mcp` adapters 實作，透過 `ntuai.dev/api/mcp` 存取 Events、Users 與 Memberships；遠端網站是唯一來源。
 
@@ -51,9 +52,9 @@ ntuai-watson-agent/
 │   └── ian/
 │       ├── domain/         # 無 I/O 的 models 與純規則
 │       ├── application/    # use cases、DTO 與 outbound Protocols
-│       ├── infrastructure/ # Payload MCP concrete adapters
+│       ├── infrastructure/ # Payload MCP、notification、完整 Agent/LangGraph runtime
 │       ├── gateways/       # Discord、Webhook、FastMCP inbound adapters
-│       ├── services/       # 暫留 Agent、RAG、notification adapter 與 runners
+│       ├── services/       # 暫留 RAG 與 process runners
 │       ├── bootstrap.py    # 唯一 dependency composition root
 │       ├── config.py       # 環境變數與檔案路徑設定
 │       └── cli.py          # Typer CLI：`ian ...`
@@ -71,8 +72,8 @@ ntuai-watson-agent/
 ├── uv.lock                 # 可重現安裝的依賴 lockfile
 ├── .env.example            # 環境變數範本
 └── data/
-    ├── ntuai_zh_base.md
-    └── ntuai_recompiled_index.jsonl
+  ├── ntuai_zh_base.md
+  └── ntuai_recompiled_index.jsonl
 ```
 
 ## 依賴方向
@@ -87,22 +88,23 @@ Discord / Facebook / LINE / FastMCP / CLI
          ian.application  --->  ian.domain
               ^
               |
-      ian.infrastructure.payload_mcp
-              |
-              v
-     ntuai.dev Payload MCP (Events / Users / Memberships)
+          ian.infrastructure
+        /           |             \
+   payload_mcp   notifications      agent
+      |                              |
+ ntuai.dev MCP                  LangGraph / Gemini
 
-ian.bootstrap 是 application 與 infrastructure 的唯一組裝點。
-Agent runtime 與 RAG 暫留 ian.services，作為後續獨立重構範圍。
+ian.bootstrap 是 application ports 與 concrete adapters 的唯一組裝點。
 ```
 
 ## 核心元件
 
-### Host Agent Client (`ian.services.agent`)
+### Host Agent Client (`ian.application.agent`)
 
-- 使用 LangGraph 與 Gemini 建立 Agent 推理迴圈。
-- 管理 session、每日用量、Prompt Injection 偵測與 URL 驗證。
-- 透過本機 Streamable HTTP MCP server 呼叫 Ian tools。
+- Gateway 只建立 `AgentRequest` 並呼叫 `AgentService`。
+- `ian.infrastructure.agent` 擁有 `LangGraphAgentAdapter`、單一 dispatcher queue、session、每日用量、prompt/callback、Discord logging、Prompt Injection、URL 驗證與 retry 行為。
+- Adapter 使用 lazy import；bootstrap composition 不載入 LangChain/LangGraph heavy modules，也不啟動 dispatcher/log thread。
+- Adapter 透過本機 Streamable HTTP MCP server 呼叫 Ian tools。
 
 ### MCP Tool Server (`ian.gateways.mcp_server`)
 

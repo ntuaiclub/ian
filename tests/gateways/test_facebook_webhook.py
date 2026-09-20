@@ -25,7 +25,7 @@ from types import SimpleNamespace
 import pytest
 
 from ian.gateways import facebook_webhook
-from ian.gateways.agent_bridge import AgentMessageResult
+from ian.application.agent import AgentResult
 
 
 def test_cleanup_processed_messages_removes_only_expired_entries(monkeypatch):
@@ -145,8 +145,8 @@ def test_process_message_task_handles_no_response_reactions(
     async def fake_typing(recipient_id, action, _correlation_id=None):
         typing_calls.append((recipient_id, action))
 
-    async def fake_agent(**_kwargs):
-        return AgentMessageResult(
+    async def fake_agent(_request):
+        return AgentResult(
             text="[NO_RESPONSE]",
             should_reply=False,
             reaction_emoji=reaction_emoji,
@@ -160,7 +160,7 @@ def test_process_message_task_handles_no_response_reactions(
     monkeypatch.setattr(
         facebook_webhook.member_service, "find_user_by_platform", find_member
     )
-    monkeypatch.setattr(facebook_webhook, "run_agent_message_flow", fake_agent)
+    monkeypatch.setattr(facebook_webhook.agent_service, "handle", fake_agent)
     monkeypatch.setattr(
         facebook_webhook,
         "send_reaction",

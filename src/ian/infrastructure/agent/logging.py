@@ -23,13 +23,28 @@ import time
 from datetime import datetime, timedelta, timezone
 from queue import Queue
 
-from ian.config import DISCORD_LOG_CHANNEL_ID_INT
-from ian.services import discord_api
+from ian.infrastructure.notifications.discord import DiscordHttpClient
 from ian.utils.logging import log_event
 
-LOG_CHANNEL_ID = DISCORD_LOG_CHANNEL_ID_INT
+LOG_CHANNEL_ID = 0
+discord: DiscordHttpClient | None = None
 log_queue: Queue = Queue()
 log_processor_started = False
+
+
+def configure_discord_logging(
+    client: DiscordHttpClient,
+    channel_id: int,
+) -> None:
+    global discord, LOG_CHANNEL_ID
+    discord = client
+    LOG_CHANNEL_ID = channel_id
+
+
+def _discord_client() -> DiscordHttpClient:
+    if discord is None:
+        raise RuntimeError("Discord agent logging is not configured")
+    return discord
 
 
 def start_log_processor():
@@ -67,7 +82,7 @@ def send_startup_notification():
             "```"
         )
 
-        response = discord_api.send_channel_message(LOG_CHANNEL_ID, message)
+        response = _discord_client().send_channel_message(LOG_CHANNEL_ID, message)
         if response.status_code != 200:
             log_event(
                 "external_send_failure",
@@ -127,7 +142,7 @@ def _send_log_to_discord_sync(log_entry: dict):
         if len(message) > 1900:
             message = message[:1900] + "...(truncated)"
 
-        response = discord_api.send_channel_message(LOG_CHANNEL_ID, message)
+        response = _discord_client().send_channel_message(LOG_CHANNEL_ID, message)
         if response.status_code != 200:
             log_event(
                 "external_send_failure",
