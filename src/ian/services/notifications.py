@@ -132,41 +132,6 @@ def is_staff_role(role: str) -> bool:
     return any(keyword in role for keyword in STAFF_ROLE_KEYWORDS)
 
 
-def format_staff_notification(event: dict, note: str = "") -> str:
-    lines = ["NTUAI 活動通知", "", f"=== {event['title']} ==="]
-    lines.append(f"日期: {event['date']} {event['weekday']}")
-    if event.get("time"):
-        lines.append(f"時間: {event['time']}")
-    if event.get("venue"):
-        lines.append(f"地點: {event['venue']}")
-    if event.get("speaker"):
-        lines.append(f"講者: {event['speaker']}")
-    if event.get("target"):
-        lines.append(f"對象: {event['target']}")
-
-    flags = []
-    if event.get("livestream") == "Y":
-        flags.append("線上直播")
-    if event.get("recording") == "Y":
-        flags.append("提供錄影")
-    if flags:
-        lines.append(f"備註: {' / '.join(flags)}")
-
-    if event.get("outline"):
-        outline = event["outline"]
-        if len(outline) > 300:
-            outline = outline[:300] + "..."
-        lines.append(f"\n課程大綱:\n{outline}")
-
-    if event.get("online_link"):
-        lines.append(f"\n線上連結: {event['online_link']}")
-    if event.get("slides"):
-        lines.append(f"講義: {event['slides']}")
-    if note:
-        lines.append(f"\n--- 附註 ---\n{note}")
-    return "\n".join(lines)
-
-
 def send_facebook_message(account_id: str, text: str) -> bool:
     if not PAGE_ACCESS_TOKEN:
         return False

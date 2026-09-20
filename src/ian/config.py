@@ -42,7 +42,6 @@ def _env_int(name: str, default: int) -> int:
 MCP_HOST = _env("MCP_HOST", "0.0.0.0")
 MCP_PORT = _env_int("MCP_PORT", 5191)
 
-COURSE_DATA_URL = _env("COURSE_DATA_URL")
 CACHE_DIR = PROJECT_ROOT / "cache"
 DATA_DIR = PROJECT_ROOT / "data"
 
@@ -59,9 +58,9 @@ FB_VERIFY_TOKEN = _env("FB_VERIFY_TOKEN")
 LINE_CHANNEL_ACCESS_TOKEN = _env("LINE_CHANNEL_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = _env("LINE_CHANNEL_SECRET")
 
-MEMBER_MCP_URL = _env("MEMBER_MCP_URL", "https://ntuai.dev/api/mcp")
-MEMBER_MCP_API_KEY = _env("MEMBER_MCP_API_KEY")
-MEMBER_MCP_TIMEOUT_SECONDS = _env_int("MEMBER_MCP_TIMEOUT_SECONDS", 20)
+NTUAI_MCP_URL = _env("NTUAI_MCP_URL", "https://ntuai.dev/api/mcp")
+NTUAI_MCP_API_KEY = _env("NTUAI_MCP_API_KEY")
+NTUAI_MCP_TIMEOUT_SECONDS = _env_int("NTUAI_MCP_TIMEOUT_SECONDS", 20)
 
 ALLOWED_DISCORD_CHANNELS = [
     c.strip() for c in _env("DISCORD_ALLOWED_CHANNELS").split(",") if c.strip()

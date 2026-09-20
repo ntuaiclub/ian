@@ -196,6 +196,8 @@ def cleanup_header(path: Path) -> bool:
 def missing_files() -> list[str]:
     missing: list[str] = []
     for path in tracked_files():
+        if not path.exists():
+            continue
         posix = path.as_posix()
         if posix in EXCLUDED:
             continue
@@ -211,6 +213,8 @@ def missing_files() -> list[str]:
 def add_headers() -> list[str]:
     changed: list[str] = []
     for path in tracked_files():
+        if not path.exists():
+            continue
         posix = path.as_posix()
         if posix in EXCLUDED:
             continue

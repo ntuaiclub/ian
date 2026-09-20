@@ -47,10 +47,9 @@ cp .env.example .env
 | `GOOGLE_API_KEY` | Google Gemini API Key |
 | `PAGE_ACCESS_TOKEN` | Facebook Page Access Token |
 | `FB_VERIFY_TOKEN` | Facebook Webhook 驗證 Token |
-| `MEMBER_MCP_URL` | ntuai.dev 社員 MCP endpoint |
-| `MEMBER_MCP_API_KEY` | 社員 MCP API Key |
-| `MEMBER_MCP_TIMEOUT_SECONDS` | 社員 MCP 呼叫逾時秒數 |
-| `COURSE_DATA_URL` | 課程資料來源 URL |
+| `NTUAI_MCP_URL` | ntuai.dev Payload MCP endpoint |
+| `NTUAI_MCP_API_KEY` | Events、Users 與 Memberships MCP API Key |
+| `NTUAI_MCP_TIMEOUT_SECONDS` | Payload MCP 呼叫逾時秒數 |
 | `LINE_CHANNEL_ACCESS_TOKEN` | LINE Channel Access Token |
 | `LINE_CHANNEL_SECRET` | LINE Channel Secret |
 | `LINE_ALLOWED_GROUPS` | LINE 白名單群組 ID（逗號分隔） |

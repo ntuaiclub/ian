@@ -23,9 +23,9 @@ from datetime import datetime
 from typing import Protocol
 
 from ian.config import (
-    MEMBER_MCP_API_KEY,
-    MEMBER_MCP_TIMEOUT_SECONDS,
-    MEMBER_MCP_URL,
+    NTUAI_MCP_API_KEY,
+    NTUAI_MCP_TIMEOUT_SECONDS,
+    NTUAI_MCP_URL,
 )
 from ian.domain.members import (
     MemberDataError,
@@ -110,6 +110,18 @@ class MemberService:
     ) -> str:
         user = await self.find_user_by_platform(platform, account_id)
         return user.member_role(now) if user else MemberTier.NON_MEMBER.label
+
+    async def get_member_tier(
+        self,
+        platform: str | Platform,
+        account_id: str,
+        now: datetime | None = None,
+    ) -> MemberTier:
+        try:
+            user = await self.find_user_by_platform(platform, account_id)
+            return user.effective_tier(now) if user else MemberTier.NON_MEMBER
+        except Exception:
+            return MemberTier.NON_MEMBER
 
     async def bind_user_platform(
         self,
@@ -257,9 +269,9 @@ class MemberService:
 
 def create_member_service() -> MemberService:
     caller = StreamableHttpMcpToolCaller(
-        MEMBER_MCP_URL,
-        MEMBER_MCP_API_KEY,
-        MEMBER_MCP_TIMEOUT_SECONDS,
+        NTUAI_MCP_URL,
+        NTUAI_MCP_API_KEY,
+        NTUAI_MCP_TIMEOUT_SECONDS,
     )
     return MemberService(MemberMcpRepository(caller))
 

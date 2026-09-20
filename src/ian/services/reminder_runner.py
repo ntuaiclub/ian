@@ -19,46 +19,39 @@
 #
 
 import asyncio
-import io
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from urllib.parse import quote
 
-import pandas as pd
-import requests
-
-from ian.config import COURSE_DATA_URL, TZ_TPE
-from ian.domain.reminders import (
-    find_events_on_date,
-    format_reminder_message,
-    seconds_until_next_run,
-)
+from ian.config import TZ_TPE
 from ian.services import notifications
+from ian.services.event_service import create_event_service
 from ian.services.member_service import ReminderRecipient, member_service
 from ian.utils.logging import elapsed_ms, log_event
 
 REMINDER_HOUR = 19
 REMINDER_MINUTE = 0
 _FAILURE_NOTIFICATIONS = {
-    "fetch_course_data": "FAILED to fetch course data",
-    "prepare_events": "FAILED to prepare event data",
+    "load_events": "FAILED to load event data",
     "load_members": "FAILED to load member data",
 }
+event_service = create_event_service()
+
+
+def seconds_until_next_run(
+    now: datetime | None = None,
+    hour: int = REMINDER_HOUR,
+    minute: int = REMINDER_MINUTE,
+) -> float:
+    current = now or datetime.now(TZ_TPE)
+    target = current.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    if current >= target:
+        target += timedelta(days=1)
+    return (target - current).total_seconds()
 
 
 def load_recipients() -> list[ReminderRecipient]:
     return asyncio.run(member_service.list_reminder_recipients())
-
-
-def fetch_course_data() -> pd.DataFrame:
-    if not COURSE_DATA_URL:
-        raise RuntimeError("COURSE_DATA_URL is not configured")
-
-    headers = {"User-Agent": "Mozilla/5.0"}
-    resp = requests.get(COURSE_DATA_URL, headers=headers, timeout=30)
-    resp.raise_for_status()
-    resp.encoding = "utf-8"
-    return pd.read_csv(io.StringIO(resp.text))
 
 
 def _report_job_failure(
@@ -87,7 +80,14 @@ def run_once(target_date: str | None = None, dry: bool = False):
 
     if target_date is None:
         tomorrow = now + timedelta(days=1)
-        target_date = tomorrow.strftime("%Y/%m/%d")
+        target_date = tomorrow.strftime("%Y-%m-%d")
+
+    normalized_target_date = target_date.replace("/", "-")
+    try:
+        parsed_target_date = date.fromisoformat(normalized_target_date)
+    except ValueError as error:
+        _report_job_failure(started_at, target_date, "load_events", error)
+        return
 
     log_event(
         "job_started",
@@ -99,16 +99,11 @@ def run_once(target_date: str | None = None, dry: bool = False):
     )
 
     try:
-        df = fetch_course_data()
+        events = asyncio.run(
+            event_service.list_events_on_date(parsed_target_date, viewer_tier=3)
+        )
     except Exception as e:
-        _report_job_failure(started_at, target_date, "fetch_course_data", e)
-        return
-
-    try:
-        events = find_events_on_date(df, target_date)
-        message = format_reminder_message(events) if events else ""
-    except Exception as e:
-        _report_job_failure(started_at, target_date, "prepare_events", e)
+        _report_job_failure(started_at, target_date, "load_events", e)
         return
 
     if not events:
@@ -145,7 +140,14 @@ def run_once(target_date: str | None = None, dry: bool = False):
 
     delivery = notifications.empty_delivery_result(recipients)
     for recipient in recipients:
-        personal_message = message
+        visible_events = [
+            event
+            for event in events
+            if event_service.can_access(event, int(recipient.tier))
+        ]
+        if not visible_events:
+            continue
+        personal_message = event_service.format_events(visible_events)
         if recipient.name and recipient.email:
             checkin_url = (
                 "https://watsonshih.github.io/QuickRecord/user.html?"
@@ -171,7 +173,7 @@ def run_once(target_date: str | None = None, dry: bool = False):
         delivery[f"{recipient.platform.value}_{outcome}"] += 1
         time.sleep(0.5)
 
-    event_titles = ", ".join(ev["title"] for ev in events)
+    event_titles = ", ".join(event.title for event in events)
     summary = (
         f"```\n"
         f"[REMINDER] {now.strftime('%Y-%m-%d %H:%M:%S')}\n"

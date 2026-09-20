@@ -88,10 +88,10 @@ ntuai-watson-agent/
 
 | 工具名稱 | 功能 | 參數 |
 |----------|------|------|
-| `course_retreviler` | 課程 / 活動資料語意搜尋 | `platform`, `account_id`, `query`, `channel_id` |
+| `event_retriever` | 依 Membership tier 搜尋可見活動 | `platform`, `account_id`, `query` |
 | `qa_retreviler` | 社團 FAQ 混合搜尋 (BM25 + Semantic) | `query`, `top_k` |
 | `notify_staff` | 幹部通知（透過 Discord 頻道） | `message`, `user_name`, `platform`, `context` |
-| `notify_members` | 幹部依每位社員選定的平台發送通知 | `role`, `event_date`, `note`, `custom_message` |
+| `notify_members` | 幹部依每位社員選定的平台發送通知 | `role`, `event_id`, `note`, `custom_message` |
 | `generate_checkin_code` | 產生使用者專屬的活動簽到碼連結 | `platform`, `account_id`, `name`, `email` |
 | `bind_email` | 透過 Email 綁定社員身分 | `email`, `platform`, `account_id` |
 | `update_subscribe` | 更新每日課程通知訂閱設定（discord、fb、line） | `platform`, `account_id`, `subscribe` |
@@ -102,22 +102,23 @@ ntuai-watson-agent/
 - 結合 **BM25** 關鍵字搜尋（jieba 中文分詞）與 **FAISS** 語意向量搜尋（`paraphrase-multilingual-MiniLM-L12-v2`），加權混合排序後回傳結果。
 - 支援 FAISS 索引快取（基於來源文件 hash 自動重建）與 GPU 加速。
 
-**課程資料**：
+**活動資料**：
 
-- 從 Google Sheets CSV 自動載入，每 30 分鐘更新一次，並快取至本地檔案。
-- 支援**權限控制**：社員專屬欄位（線上連結、錄影檔案、課程照片、課程講義、備註）僅對已驗證社員或白名單頻道開放。
+- Events 只透過 ntuai.dev Payload MCP 的 `findEvents` 讀取，不使用本地 CSV 或 stale cache。
+- `EventMcpRepository` 固定使用公開欄位 allowlist，排除 `checkIns` 等非顯示資料。
+- `EventService` 依 Event `minimumTier` 與使用者有效 Membership tier 控制查詢與通知資格。
 
 **社員通知（`notify_members`）**：
 
 - 僅限幹部使用（硬邏輯檢查角色是否包含「社長」、「部長」、「部員」）。
-- **活動通知模式**：選擇課程資料庫中的活動，自動帶入完整資訊（日期、時間、地點、講者、大綱等）發送給所有綁定社員。
+- **活動通知模式**：以 Event ID 精確選擇 published Event，依 `minimumTier` 過濾收件者後發送。
 - **自訂通知模式**：直接提供自訂訊息內容，不需選擇活動。
 - 未指定活動時，自動列出即將舉辦的 3 場活動供選擇。
 - 依每位社員的單一 `subscribe` 平台，透過 Discord、Facebook 或 LINE 發送。
 
 ### Daily Event Reminder (`ian.services.reminder_runner`)
 
-- 每日 **19:00 UTC+8** 自動檢查隔天是否有活動，若有則 DM 通知所有已綁定帳號的有效社員。
+- 每日 **19:00 UTC+8** 透過 Event MCP 檢查隔天活動，依每位收件者 tier 過濾後發送。
 - 通知內容包含完整活動資訊（課程大綱、講者、是否直播/錄影、講義連結、課程對象等），自動處理空值。
 - 依每位社員的單一 `subscribe` 平台，透過 Discord、Facebook 或 LINE 發送。
 - 支援個人化簽到連結（`QuickRecord`）。
@@ -183,5 +184,5 @@ Flask Web Server，接收各平台 webhook 並在背景執行緒處理訊息。`
 | Bot SDK | discord.py、LINE Bot SDK |
 | Transport | MCP streamable-http via Starlette + Uvicorn |
 | 社員資料 | ntuai.dev MCP（Users + Memberships） |
-| 課程資料 | Google Sheets CSV（自動定時更新） |
+| 活動資料 | ntuai.dev Payload MCP（Events） |
 | Infrastructure | Docker (NVIDIA CUDA 12.1)、Docker Compose、ngrok |
