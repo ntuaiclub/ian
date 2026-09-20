@@ -26,7 +26,7 @@ PYTEST ?= uv run pytest
 PRE_COMMIT ?= uv run pre-commit
 DOCKER_COMPOSE ?= docker compose
 
-.PHONY: help setup sync test precommit-install precommit docker-build docker-up docker-logs docker-down clean
+.PHONY: help setup sync test precommit-install precommit recompile-knowledge check-knowledge docker-build docker-up docker-logs docker-down clean
 
 help: ## Show available targets.
 	@awk 'BEGIN {FS = ":.*## "; printf "Available targets:\n"} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-18s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -44,6 +44,12 @@ precommit-install: ## Install pre-commit git hooks.
 
 precommit: ## Run pre-commit hooks against all files.
 	$(PRE_COMMIT) run --all-files
+
+recompile-knowledge: ## Rebuild the RAG JSONL index from the Markdown knowledge base.
+	$(PYTHON) scripts/recompile_ntuai_index.py
+
+check-knowledge: ## Check whether the RAG JSONL index matches its Markdown source.
+	$(PYTHON) scripts/recompile_ntuai_index.py --check
 
 docker-build: ## Build the Docker Compose services.
 	$(DOCKER_COMPOSE) build

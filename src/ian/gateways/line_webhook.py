@@ -26,22 +26,25 @@ import requests
 from linebot import LineBotApi, WebhookHandler
 from linebot.models import MessageEvent, TextMessage, TextSendMessage
 
+from ian.application.agent import AgentRequest
+from ian.bootstrap import get_application
 from ian.config import (
     LINE_ALLOWED_GROUPS,
     LINE_CHANNEL_ACCESS_TOKEN,
     LINE_CHANNEL_SECRET,
 )
 from ian.domain.messages import split_message_chunks
-from ian.gateways.agent_bridge import run_agent_message_flow
 from ian.gateways.messaging_common import (
     get_current_time,
     save_chat_history,
 )
-from ian.services.member_service import member_service
 from ian.utils.logging import elapsed_ms, hash_identifier, log_event
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 line_handler = WebhookHandler(LINE_CHANNEL_SECRET)
+application = get_application()
+agent_service = application.agent
+member_service = application.members
 
 
 def get_line_user_profile(user_id):
@@ -112,30 +115,6 @@ def handle_line_message(event):
         message_length=len(actual_question),
     )
 
-    try:
-        loading_url = "https://api.line.me/v2/bot/chat/loading/start"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
-        }
-        loading_data = {
-            "chatId": chat_id,
-            "loadingSeconds": 20,
-        }
-        requests.post(loading_url, headers=headers, json=loading_data, timeout=3)
-    except Exception as e:
-        log_event(
-            "external_send_failure",
-            "line_webhook",
-            level="error",
-            platform="LINE",
-            status="error",
-            correlation_id=hash_identifier(event.reply_token),
-            channel_id=chat_id,
-            operation="loading_indicator",
-            error=e,
-        )
-
     coro = process_line_message_task(
         event.reply_token, user_id, actual_question, chat_id, source_type
     )
@@ -150,9 +129,33 @@ async def process_line_message_task(
     correlation_id = hash_identifier(reply_token)
     started_at = time.monotonic()
     try:
+        try:
+            await asyncio.to_thread(
+                requests.post,
+                "https://api.line.me/v2/bot/chat/loading/start",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
+                },
+                json={"chatId": chat_id, "loadingSeconds": 20},
+                timeout=3,
+            )
+        except Exception as error:
+            log_event(
+                "external_send_failure",
+                "line_webhook",
+                level="error",
+                platform="LINE",
+                status="error",
+                correlation_id=correlation_id,
+                channel_id=chat_id,
+                operation="loading_indicator",
+                error=error,
+            )
+
         member = await member_service.find_user_by_platform("LINE", user_id)
         user_name = (
-            get_line_user_profile(user_id)
+            await asyncio.to_thread(get_line_user_profile, user_id)
             or (member.name if member else None)
             or f"LINE_{user_id[:8]}"
         )
@@ -169,16 +172,18 @@ async def process_line_message_task(
             channel_id=chat_id,
             message_length=len(user_message),
         )
-        agent_result = await run_agent_message_flow(
-            session_id=user_id,
-            user_name=user_name,
-            user_message=user_message,
-            roles=roles,
-            current_time=current_time,
-            channel_id=str(chat_id),
-            platform="LINE",
-            account_id=user_id,
-            member=member,
+        agent_result = await agent_service.handle(
+            AgentRequest(
+                session_id=user_id,
+                user_name=user_name,
+                question=user_message,
+                user_role=roles,
+                timestamp=current_time["timestamp"],
+                channel_id=str(chat_id),
+                platform="LINE",
+                account_id=user_id,
+                member=member,
+            )
         )
 
         if not agent_result.should_reply:
@@ -194,7 +199,7 @@ async def process_line_message_task(
             )
             return
 
-        if "已達今日使用上限" in agent_result.text:
+        if agent_result.reason == "usage_limit":
             log_event(
                 "no_response",
                 "line_webhook",
@@ -214,7 +219,11 @@ async def process_line_message_task(
 
         if line_messages:
             try:
-                line_bot_api.reply_message(reply_token, line_messages)
+                await asyncio.to_thread(
+                    line_bot_api.reply_message,
+                    reply_token,
+                    line_messages,
+                )
                 log_event(
                     "reply_sent",
                     "line_webhook",
@@ -240,9 +249,47 @@ async def process_line_message_task(
                     operation="reply_message",
                     error=reply_err,
                 )
-                return
+                try:
+                    await asyncio.to_thread(
+                        line_bot_api.push_message,
+                        chat_id,
+                        line_messages,
+                    )
+                    log_event(
+                        "reply_sent",
+                        "line_webhook",
+                        platform="LINE",
+                        status="fallback_success",
+                        duration_ms=elapsed_ms(started_at),
+                        correlation_id=correlation_id,
+                        user_id=user_id,
+                        channel_id=chat_id,
+                        message_count=len(line_messages),
+                    )
+                except Exception as push_error:
+                    log_event(
+                        "external_send_failure",
+                        "line_webhook",
+                        level="error",
+                        platform="LINE",
+                        status="error",
+                        duration_ms=elapsed_ms(started_at),
+                        correlation_id=correlation_id,
+                        user_id=user_id,
+                        channel_id=chat_id,
+                        operation="push_message_fallback",
+                        error=push_error,
+                    )
+                    return
 
-        save_chat_history(user_id, user_name, user_message, agent_result.text, "LINE")
+        await asyncio.to_thread(
+            save_chat_history,
+            user_id,
+            user_name,
+            user_message,
+            agent_result.text,
+            "LINE",
+        )
 
     except Exception as e:
         log_event(

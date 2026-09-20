@@ -47,10 +47,6 @@ def configure_platforms(platform: str = "all") -> set[str]:
     return ENABLED_WEBHOOK_PLATFORMS
 
 
-def initialize_dependencies() -> None:
-    """Webhook dependencies are initialized lazily by their SDK clients."""
-
-
 @app.route("/", methods=["GET"])
 async def verify():
     if "Facebook" not in ENABLED_WEBHOOK_PLATFORMS:
@@ -129,8 +125,7 @@ def status():
     }, 200
 
 
-def entrypoint(platform: str = "all"):
-    initialize_dependencies()
+def run_webhook_server(platform: str = "all") -> None:
     enabled = configure_platforms(platform)
     log_event(
         "service_started",

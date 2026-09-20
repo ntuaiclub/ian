@@ -12,12 +12,15 @@
 
 ## 專案分層
 
-- `src/ian/domain/`：無 I/O 的純邏輯，例如 prompt injection、URL、課程與社員判斷。
-- `src/ian/services/`：有狀態或外部 I/O 的服務，例如 RAG、member store、agent runtime、通知。
-- `src/ian/gateways/`：平台 adapter，例如 Discord、FB/LINE webhook、MCP server。
-- `tests/`：pytest 測試，依 domain、services、agent、integration 分類；agent / integration 目前保留 skipped placeholders，避免預設測試依賴 LLM、MCP、平台 token 或外部服務。
+- `src/ian/domain/`：無 I/O 的 models 與純規則。
+- `src/ian/application/`：use cases、DTO 與 application-owned Protocols。
+- `src/ian/infrastructure/`：Payload MCP、notification、LangGraph 與 Hybrid RAG concrete adapters/runtime。
+- `src/ian/gateways/`：Discord、FB/LINE webhook 與 FastMCP inbound adapters。
+- `src/ian/entrypoints/`：Reminder scheduler 與 process supervisor；只負責 process lifecycle。
+- `src/ian/bootstrap.py`：唯一 dependency composition root。
+- `tests/`：pytest 測試，依 domain、application、adapter/gateway 與整體架構規則分類。
 
-修改時請維持既有分層：純邏輯放在 `domain`，外部服務或狀態邊界放在 `services`，平台入口放在 `gateways`。
+修改時請維持依賴方向：`gateways/entrypoints -> application -> domain`，`infrastructure` 實作 application ports，並只由 `bootstrap.py` 組裝。Application 不可 import infrastructure、gateway、entrypoint、HTTP/MCP 或平台 SDK。
 
 ## 初始化環境
 
@@ -69,7 +72,7 @@ uv run ian --help
 
 ```bash
 uv run ian serve
-uv run ian mcp --http --port 5191
+uv run ian mcp --port 5191
 uv run ian webhook
 uv run ian reminder --daemon
 uv run ian discord

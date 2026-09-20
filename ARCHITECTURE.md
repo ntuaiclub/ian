@@ -10,34 +10,38 @@
   │ Gateway 層               │    │ MCP Tool Server           │
   │ ian.gateways             │◄──►│ ian.gateways             │
   │ - discord_bot            │    │ - mcp_server             │
-  │ - webhook_server         │    │ - Hybrid RAG             │
+  │ - webhook_server         │    │ - RagService             │
   │ - facebook_webhook       │    │                          │
   │ - line_webhook           │    │                          │
   │                          │    │ - 課程 / 通知 / 綁定工具 │
-  └────────────┬─────────────┘    └──────────────────────────┘
-               │                              ▲
-               │                    ┌──────────────────────────┐
-               │                    │ Member MCP               │
-               │                    │ ntuai.dev/api/mcp        │
-               │                    │ Users + Memberships      │
-               │                    │ Single Source of Truth   │
-               │                    └──────────────────────────┘
-           ▼
+  └────────────┬─────────────┘    └────────────┬─────────────┘
+               │                               ├──────────────┐
+               ▼                               ▼              ▼
   ┌──────────────────────────┐
-  │ Agent Runtime            │
-  │ ian.services             │
-  │ - agent/                 │
+  │ Agent Infrastructure     │
+  │ ian.infrastructure.agent │
+  │ - runtime / sessions     │
   │ - LangGraph ReAct        │
   │ - Gemini 3 Flash         │
   └──────────────────────────┘
+                               ┌──────────────────┐ ┌──────────────────┐
+                               │ Member MCP       │ │ RAG Infra        │
+                               │ Users / Members  │ │ BM25 / FAISS     │
+                               │ ntuai.dev        │ │ embeddings/cache │
+                               └──────────────────┘ └──────────────────┘
 ```
 
 ### 各層職責
 
+- **Domain 層**：`ian.domain` 保存 Event、Member 與純規則，不依賴環境設定或外部 SDK。
+- **Application 層**：`ian.application` 保存 Event、Member、提醒、社員通知與 RAG use cases／DTO，以及 application 所擁有的 outbound Protocol。
+- **Infrastructure 層**：`ian.infrastructure` 實作 Payload MCP repositories、Discord／Facebook／LINE notification adapters、LangGraph Agent adapter/runtime，以及 Hybrid RAG 的 BM25／FAISS runtime。
+- **Entrypoints 層**：`ian.entrypoints` 保存 reminder scheduler 與多程序 supervisor，只負責 process lifecycle 並透過 bootstrap 取得 application services。
+- **Bootstrap**：`ian.bootstrap` 是 repositories、notification adapters、Agent/RAG adapters 與 application services 的唯一組裝點；組裝本身不載入 RAG 模型、不執行網路 I/O、不啟動 thread，也不傳送通知。
 - **Gateway 層**：各平台入口。`ian.gateways.discord_bot` 處理 Discord Slash Commands；`ian.gateways.webhook_server` (Flask) 負責 Webhook route wiring，並委派給 `ian.gateways.facebook_webhook` 與 `ian.gateways.line_webhook` 處理 Facebook Messenger / LINE 平台細節。
-- **Host Agent Client**：`ian.services.agent` 使用 LangGraph `create_react_agent` 搭配 Google Gemini 3 Flash，透過 MCP 協定調用工具，並管理每位使用者的獨立對話 session。
+- **Host Agent Client**：`ian.application.agent.AgentService` 只依賴 `AgentPort`；`ian.infrastructure.agent.LangGraphAgentAdapter` 封裝 queue-based LangGraph runtime、Gemini、MCP tools 與 session lifecycle。
 - **MCP Tool Server**：`ian.gateways.mcp_server` 以 FastMCP 框架透過 streamable HTTP 提供 RAG 搜尋、課程查詢、幹部通知、社員綁定、簽到碼產生、訂閱管理、個性備註等工具。
-- **Member MCP**：`ian.services.member_service` 與 `member_mcp_repository` 透過 `ntuai.dev/api/mcp` 直接讀寫 Users 與 Memberships；遠端網站是社員資料唯一來源，不使用本地社員快取。
+- **Payload MCP**：application 的 repository Protocol 由 `ian.infrastructure.payload_mcp` adapters 實作，透過 `ntuai.dev/api/mcp` 存取 Events、Users 與 Memberships；遠端網站是唯一來源。
 
 ## 專案結構
 
@@ -45,14 +49,19 @@
 ntuai-watson-agent/
 ├── src/
 │   └── ian/
-│       ├── config.py       # 共用環境變數、路徑與時區設定
-│       ├── domain/         # 無 I/O 的純邏輯：injection、URL、member、course、reminder
-│       ├── services/       # 有狀態或 I/O 的服務邊界
-│       ├── gateways/       # Discord、Webhook、MCP 平台 adapter
+│       ├── domain/         # 無 I/O 的 models 與純規則
+│       ├── application/    # use cases、DTO 與 outbound Protocols
+│       ├── infrastructure/ # Payload MCP、notification、Agent 與 RAG runtime
+│       ├── gateways/       # Discord、Webhook、FastMCP inbound adapters
+│       ├── entrypoints/    # Reminder scheduler 與 process supervisor
+│       ├── bootstrap.py    # 唯一 dependency composition root
+│       ├── config.py       # 環境變數與檔案路徑設定
 │       └── cli.py          # Typer CLI：`ian ...`
 ├── tests/
 │   ├── domain/             # 純邏輯 pytest 覆蓋
-│   ├── services/           # service 邊界 pytest 覆蓋
+│   ├── application/        # use case 與 port 邊界 pytest 覆蓋
+│   ├── infrastructure/     # concrete adapter pytest 覆蓋
+│   ├── entrypoints/        # process lifecycle pytest 覆蓋
 │   ├── agent/              # Agent runtime placeholder（目前 intentionally skipped）
 │   └── integration/        # MCP/LLM/平台整合測試 placeholder（目前 intentionally skipped）
 ├── Dockerfile              # NVIDIA CUDA 12.1 + Python 3.11 映像
@@ -64,59 +73,78 @@ ntuai-watson-agent/
 ├── uv.lock                 # 可重現安裝的依賴 lockfile
 ├── .env.example            # 環境變數範本
 └── data/
-    ├── ntuai_zh_base.md                # Markdown 知識庫文件（RAG 資料來源）
-    └── ntuai_recompiled_index.jsonl    # QA 知識庫（JSONL 格式）
+  ├── ntuai_zh_base.md
+  └── ntuai_recompiled_index.jsonl
+```
+
+## 依賴方向
+
+```text
+Discord / Facebook / LINE / FastMCP       CLI / daemon
+         |                            |
+         v                            v
+       ian.gateways               ian.entrypoints
+         |                            |
+         +------------+---------------+
+             v
+          ian.application  --->  ian.domain
+             ^
+             |
+          ian.infrastructure
+        /          |          |          \
+      payload_mcp notifications  agent       rag
+        |                     |           |
+      ntuai.dev MCP       LangGraph/Gemini  BM25/FAISS
+
+ian.bootstrap 是 application ports 與 concrete adapters 的唯一組裝點。
 ```
 
 ## 核心元件
 
-### Host Agent Client (`ian.services.agent`)
+### Host Agent Client (`ian.application.agent`)
 
-- 使用 **LangGraph** `create_react_agent` 搭配 **Google Gemini 3 Flash** (`gemini-3-flash-preview`) 建立 ReAct 推理迴圈。
-- 每位使用者擁有獨立 session（含 `MemorySaver` 對話記憶），閒置 15 分鐘自動過期。
-- 透過 **MCP streamable-http** 連接 MCP Server 取得工具。
-- 內建 **每日用量限制**（每位使用者 10 次 / 日，UTC+8 午夜重置）。
-- 整合 **Prompt Injection 偵測**，攔截惡意輸入。
-- **URL 驗證**：從 system prompt 與工具結果中提取合法 URL，攔截 LLM 幻覺連結。
-- 所有互動記錄（使用者訊息、工具呼叫、工具結果、Agent 回應、錯誤、Session 事件）即時推送至 **Discord Log Channel**。
-- 支援 `[NO_RESPONSE]` 機制，Agent 可選擇不回應（搭配可選 emoji reaction）。
-- 啟動時自動發送系統通知至 Discord Log Channel。
+- Gateway 只建立 `AgentRequest` 並呼叫 `AgentService`。
+- `ian.infrastructure.agent` 擁有 `LangGraphAgentAdapter`、單一 dispatcher queue、session、每日用量、prompt/callback、Discord logging、Prompt Injection、URL 驗證與 retry 行為。
+- Adapter 使用 lazy import；bootstrap composition 不載入 LangChain/LangGraph heavy modules，也不啟動 dispatcher/log thread。
+- Adapter 透過本機 Streamable HTTP MCP server 呼叫 Ian tools。
 
 ### MCP Tool Server (`ian.gateways.mcp_server`)
 
-基於 **FastMCP** 框架，透過 streamable-http 傳輸提供以下工具：
+基於 FastMCP，固定使用 Streamable HTTP transport：
 
 | 工具名稱 | 功能 | 參數 |
 |----------|------|------|
 | `event_retriever` | 依 Membership tier 搜尋可見活動 | `platform`, `account_id`, `query` |
-| `qa_retreviler` | 社團 FAQ 混合搜尋 (BM25 + Semantic) | `query`, `top_k` |
-| `notify_staff` | 幹部通知（透過 Discord 頻道） | `message`, `user_name`, `platform`, `context` |
-| `notify_members` | 幹部依每位社員選定的平台發送通知 | `role`, `event_id`, `note`, `custom_message` |
+| `qa_retreviler` | 社團 FAQ 混合搜尋 | `query`, `top_k` |
+| `notify_staff` | 將問題轉交 Discord 幹部頻道 | `message`, `user_name`, `platform`, `context` |
+| `notify_members` | 幹部依每位社員選定的平台發送通知 | `platform`, `account_id`, `event_id`, `note`, `custom_message` |
 | `generate_checkin_code` | 產生使用者專屬的活動簽到碼連結 | `platform`, `account_id`, `name`, `email` |
 | `bind_email` | 透過 Email 綁定社員身分 | `email`, `platform`, `account_id` |
 | `update_subscribe` | 更新每日課程通知訂閱設定（discord、fb、line） | `platform`, `account_id`, `subscribe` |
 | `update_personal_prompt` | 記錄使用者溝通風格與偏好（最多 100 字） | `platform`, `account_id`, `personal_prompt` |
 
-**Hybrid RAG 系統**：
+**Hybrid RAG 系統（`ian.application.rag` + `ian.infrastructure.rag`）**：
 
+- MCP gateway 只依賴 `RagService` 與 technology-neutral `RagSearchResult`，不接觸 LangChain `Document`。
+- `HybridRagAdapter` 實作 application-owned `RagSearchPort`，並以 lazy import 延後載入模型、LangChain 與 FAISS runtime。
 - 結合 **BM25** 關鍵字搜尋（jieba 中文分詞）與 **FAISS** 語意向量搜尋（`paraphrase-multilingual-MiniLM-L12-v2`），加權混合排序後回傳結果。
 - 支援 FAISS 索引快取（基於來源文件 hash 自動重建）與 GPU 加速。
 
 **活動資料**：
 
 - Events 只透過 ntuai.dev Payload MCP 的 `findEvents` 讀取，不使用本地 CSV 或 stale cache。
-- `EventMcpRepository` 固定使用公開欄位 allowlist，排除 `checkIns` 等非顯示資料。
+- `PayloadMcpEventRepository` 固定使用公開欄位 allowlist，排除 `checkIns` 等非顯示資料。
 - `EventService` 依 Event `minimumTier` 與使用者有效 Membership tier 控制查詢與通知資格。
 
 **社員通知（`notify_members`）**：
 
-- 僅限幹部使用（硬邏輯檢查角色是否包含「社長」、「部長」、「部員」）。
+- 僅限 ntuai.dev Users `role` 為 `admin` 或 `check-in-staff` 的已綁定使用者。
 - **活動通知模式**：以 Event ID 精確選擇 published Event，依 `minimumTier` 過濾收件者後發送。
 - **自訂通知模式**：直接提供自訂訊息內容，不需選擇活動。
 - 未指定活動時，自動列出即將舉辦的 3 場活動供選擇。
 - 依每位社員的單一 `subscribe` 平台，透過 Discord、Facebook 或 LINE 發送。
 
-### Daily Event Reminder (`ian.services.reminder_runner`)
+### Daily Event Reminder (`ian.entrypoints.reminder`)
 
 - 每日 **19:00 UTC+8** 透過 Event MCP 檢查隔天活動，依每位收件者 tier 過濾後發送。
 - 通知內容包含完整活動資訊（課程大綱、講者、是否直播/錄影、講義連結、課程對象等），自動處理空值。
@@ -125,7 +153,7 @@ ntuai-watson-agent/
 - 支援 `--daemon` 模式（容器內常駐）、`--dry` 模擬執行、`--date` 指定日期檢查。
 - 發送結果記錄至 Discord Log Channel。
 
-### Member MCP (`ian.services.member_service`)
+### Member Application (`ian.application.members`)
 
 - `ntuai.dev` 的 Users 與 Memberships 是社員資料唯一來源；不匯入、不讀取本地舊資料。
 - 支援依 Discord、Facebook、LINE account ID 或已驗證 Email 查詢與綁定。
