@@ -87,11 +87,10 @@ def test_qa_retriever_formats_application_results(monkeypatch):
     assert "標籤：社課, 時間" in result
 
 
-def test_mcp_does_not_expose_legacy_checkin_tool():
+def test_mcp_exposes_supported_tool_set():
     tool_names = {tool.name for tool in _run(mcp_server.mcp.list_tools())}
 
-    assert "generate_checkin_code" not in tool_names
-    assert {
+    assert tool_names == {
         "event_retriever",
         "qa_retreviler",
         "notify_staff",
@@ -99,7 +98,7 @@ def test_mcp_does_not_expose_legacy_checkin_tool():
         "bind_email",
         "update_subscribe",
         "update_personal_prompt",
-    }.issubset(tool_names)
+    }
 
 
 @pytest.mark.parametrize(

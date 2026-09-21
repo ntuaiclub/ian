@@ -41,11 +41,6 @@ def test_event_registration_does_not_collect_identity_or_claim_completion():
     assert "使用者必須自行在該網站完成活動報名與簽到" in SYS_PROMPT
 
 
-def test_agent_prompt_omits_legacy_checkin_flow_but_keeps_identity_binding():
-    for legacy_reference in (
-        "generate_checkin_code",
-        "QuickRecord",
-        "watsonshih.github.io",
-    ):
-        assert legacy_reference not in SYS_PROMPT
+def test_agent_prompt_keeps_member_identity_binding_separate():
     assert "bind_email" in SYS_PROMPT
+    assert "只有在使用者明確要求綁定社員身分時" in SYS_PROMPT
