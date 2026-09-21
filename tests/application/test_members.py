@@ -257,6 +257,8 @@ async def test_reminder_recipients_use_each_users_single_platform():
         (Platform.FB, "fb-11"),
         (Platform.LINE, "line-12"),
     ]
+    assert all(not hasattr(item, "name") for item in recipients)
+    assert all(not hasattr(item, "email") for item in recipients)
 
 
 @pytest.mark.asyncio

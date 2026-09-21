@@ -22,7 +22,6 @@ from dataclasses import dataclass
 
 from ian.application.agent import AgentPort, AgentService
 from ian.application.chat_history import ChatHistoryService, ChatHistoryWriter
-from ian.application.checkins import CheckinLinkService
 from ian.application.events import EventService
 from ian.application.member_notifications import MemberNotificationService
 from ian.application.members import MemberService
@@ -55,7 +54,6 @@ class ApplicationServices:
     chat_history: ChatHistoryService
     events: EventService
     members: MemberService
-    checkins: CheckinLinkService
     reminders: DailyReminderService
     member_notifications: MemberNotificationService
     operational_notifications: OperationalNotifier
@@ -133,7 +131,6 @@ def build_application(
         chat_history=ChatHistoryService(chat_history_writer),
         events=events,
         members=members,
-        checkins=CheckinLinkService(members),
         reminders=DailyReminderService(events, members, notification_sender),
         member_notifications=MemberNotificationService(
             events,

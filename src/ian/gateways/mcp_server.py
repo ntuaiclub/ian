@@ -44,7 +44,6 @@ application = get_application()
 event_service = application.events
 member_service = application.members
 member_notification_service = application.member_notifications
-checkin_service = application.checkins
 operational_notifier = application.operational_notifications
 rag_service = application.rag
 
@@ -219,47 +218,6 @@ async def notify_staff(
     except Exception as e:
         _log_mcp_tool_failure("notify_staff", e, platform=platform)
         return f"⚠️ 通知發送時發生錯誤：{str(e)}"
-
-
-@mcp.tool(name="generate_checkin_code")
-async def generate_checkin_code(
-    platform: str, account_id: str, name: str = "", email: str = ""
-) -> str:
-    """
-    產生使用者專屬的活動簽到碼連結。
-
-    若使用者已是社員（系統可透過平台帳號 ID 在資料庫中找到），會自動使用資料庫中的姓名與 Email 產生簽到碼。
-    若使用者不是社員或資料庫中查無資料，則需要使用者提供 name 和 email 來產生簽到碼，
-    並提醒他們：擁有簽到碼不代表成功報名或有資格入場，請確認是否已成功報名活動（例如檢查 Email 是否收到報名成功信件）。
-
-    Args:
-        platform: 使用者所在的平台（Discord、FB、LINE），從系統訊息中取得 Platform
-        account_id: 使用者在該平台上的唯一帳號 ID，從系統訊息中取得 Account ID
-        name: （非社員時必填）使用者提供的姓名
-        email: （非社員時必填）使用者提供的 Email
-    """
-    try:
-        result = await checkin_service.generate(platform, account_id, name, email)
-        if result.status == "member":
-            return f"已為社員「{result.name}」產生專屬簽到碼連結：\n{result.url}"
-        if result.status == "missing_identity":
-            return "在資料庫中查無您的社員資料，請提供您的「姓名」和「Email」以產生簽到碼。"
-        if result.status == "invalid_email":
-            return "請提供有效的 Email 地址（例如：yourname@gmail.com）"
-        return (
-            f"已為「{result.name}」產生簽到碼連結：\n{result.url}\n\n"
-            "提醒您：擁有簽到碼不代表已成功報名或有資格入場，"
-            "請確認您是否已成功報名該活動（例如檢查 Email 是否有收到報名成功的確認信件）。"
-        )
-
-    except Exception as e:
-        _log_mcp_tool_failure(
-            "generate_checkin_code",
-            e,
-            platform=platform,
-            account_id=account_id,
-        )
-        return f"⚠️ 產生簽到碼時發生錯誤：{str(e)}"
 
 
 @mcp.tool(name="bind_email")

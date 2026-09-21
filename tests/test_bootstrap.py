@@ -84,7 +84,6 @@ def test_build_application_composes_dependencies_without_io():
 
     assert isinstance(application.events.repository, PayloadMcpEventRepository)
     assert isinstance(application.members.repository, PayloadMcpMemberRepository)
-    assert application.checkins.members is application.members
     assert application.reminders.events is application.events
     assert application.reminders.members is application.members
     assert application.member_notifications.events is application.events

@@ -21,7 +21,6 @@
 from dataclasses import dataclass
 from datetime import date
 from typing import Literal
-from urllib.parse import quote
 
 from ian.application.events import EventService
 from ian.application.members import MemberService
@@ -84,12 +83,6 @@ class DailyReminderService:
                 continue
 
             message = self.events.format_events(visible_events)
-            if recipient.name and recipient.email:
-                checkin_url = (
-                    "https://watsonshih.github.io/QuickRecord/user.html?"
-                    f"name={quote(recipient.name)}&id={quote(recipient.email)}"
-                )
-                message += f"\n\n簽到碼連結：{checkin_url}"
             deliveries.append((recipient, message))
 
         if dry:
