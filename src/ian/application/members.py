@@ -62,8 +62,6 @@ class OperationResult:
 @dataclass(frozen=True)
 class ReminderRecipient:
     user_id: int
-    name: str
-    email: str
     platform: Platform
     account_id: str
     tier: MemberTier
@@ -253,8 +251,6 @@ class MemberService:
             recipients.append(
                 ReminderRecipient(
                     user_id=user.id,
-                    name=user.name,
-                    email=user.email,
                     platform=subscribed_platform,
                     account_id=account_id,
                     tier=tier,

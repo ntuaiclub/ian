@@ -49,8 +49,6 @@ def recipient(
 ) -> ReminderRecipient:
     return ReminderRecipient(
         user_id=int(account_id[-1]),
-        name="Alice",
-        email="alice@example.test",
         platform=platform,
         account_id=account_id,
         tier=tier,
@@ -166,7 +164,11 @@ async def test_filters_events_per_recipient_and_aggregates_delivery():
     assert "Event 1" in sender.calls[0][1]
     assert "Event 2" not in sender.calls[0][1]
     assert "Event 1|Event 2" in sender.calls[1][1]
-    assert "name=Alice&id=alice%40example.test" in sender.calls[0][1]
+    for _recipient, message in sender.calls:
+        assert "簽到碼" not in message
+        assert "QuickRecord" not in message
+        assert "watsonshih.github.io" not in message
+        assert "alice@example.test" not in message
     assert result.delivery is not None
     assert result.delivery.discord_ok == 1
     assert result.delivery.line_fail == 1

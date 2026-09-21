@@ -47,8 +47,6 @@ def event(tier=0):
 def recipient(user_id, tier):
     return ReminderRecipient(
         user_id=user_id,
-        name=f"Member {user_id}",
-        email=f"member-{user_id}@example.test",
         platform=Platform.DISCORD,
         account_id=f"discord-{user_id}",
         tier=tier,

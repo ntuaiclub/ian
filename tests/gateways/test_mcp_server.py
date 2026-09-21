@@ -87,55 +87,19 @@ def test_qa_retriever_formats_application_results(monkeypatch):
     assert "標籤：社課, 時間" in result
 
 
-@pytest.mark.parametrize(
-    ("member", "name", "email", "expected_parts"),
-    [
-        pytest.param(
-            {"name": "王 小明", "email": "member+test@example.test"},
-            "ignored",
-            "ignored@example.test",
-            (
-                "已為社員「王 小明」",
-                "name=%E7%8E%8B%20%E5%B0%8F%E6%98%8E",
-                "id=member%2Btest%40example.test",
-            ),
-            id="bound-member",
-        ),
-        pytest.param(
-            None,
-            "",
-            "",
-            ("請提供您的「姓名」和「Email」",),
-            id="missing-non-member-info",
-        ),
-        pytest.param(
-            None, "Visitor", "invalid", ("請提供有效的 Email",), id="invalid-email"
-        ),
-        pytest.param(
-            None,
-            "Guest User",
-            "guest+event@example.test",
-            (
-                "已為「Guest User」",
-                "name=Guest%20User",
-                "id=guest%2Bevent%40example.test",
-                "不代表已成功報名",
-            ),
-            id="non-member-link",
-        ),
-    ],
-)
-def test_generate_checkin_code_handles_member_and_guest_flows(
-    monkeypatch, member, name, email, expected_parts
-):
-    async def find_member(*_args):
-        return SimpleNamespace(**member) if member else None
+def test_mcp_does_not_expose_legacy_checkin_tool():
+    tool_names = {tool.name for tool in _run(mcp_server.mcp.list_tools())}
 
-    monkeypatch.setattr(mcp_server.member_service, "find_user_by_platform", find_member)
-
-    result = _run(mcp_server.generate_checkin_code("Discord", "account-1", name, email))
-
-    assert all(part in result for part in expected_parts)
+    assert "generate_checkin_code" not in tool_names
+    assert {
+        "event_retriever",
+        "qa_retreviler",
+        "notify_staff",
+        "notify_members",
+        "bind_email",
+        "update_subscribe",
+        "update_personal_prompt",
+    }.issubset(tool_names)
 
 
 @pytest.mark.parametrize(

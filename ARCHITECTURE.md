@@ -40,7 +40,7 @@
 - **Bootstrap**：`ian.bootstrap` 是 repositories、notification adapters、Agent/RAG adapters 與 application services 的唯一組裝點；組裝本身不載入 RAG 模型、不執行網路 I/O、不啟動 thread，也不傳送通知。
 - **Gateway 層**：各平台入口。`ian.gateways.discord_bot` 處理 Discord Slash Commands；`ian.gateways.webhook_server` (Flask) 負責 Webhook route wiring，並委派給 `ian.gateways.facebook_webhook` 與 `ian.gateways.line_webhook` 處理 Facebook Messenger / LINE 平台細節。
 - **Host Agent Client**：`ian.application.agent.AgentService` 只依賴 `AgentPort`；`ian.infrastructure.agent.LangGraphAgentAdapter` 封裝 queue-based LangGraph runtime、Gemini、MCP tools 與 session lifecycle。
-- **MCP Tool Server**：`ian.gateways.mcp_server` 以 FastMCP 框架透過 streamable HTTP 提供 RAG 搜尋、課程查詢、幹部通知、社員綁定、簽到碼產生、訂閱管理、個性備註等工具。
+- **MCP Tool Server**：`ian.gateways.mcp_server` 以 FastMCP 框架透過 streamable HTTP 提供 RAG 搜尋、課程查詢、幹部通知、社員綁定、訂閱管理、個性備註等工具。
 - **Payload MCP**：application 的 repository Protocol 由 `ian.infrastructure.payload_mcp` adapters 實作，透過 `ntuai.dev/api/mcp` 存取 Events、Users 與 Memberships；遠端網站是唯一來源。
 
 ## 專案結構
@@ -118,7 +118,6 @@ ian.bootstrap 是 application ports 與 concrete adapters 的唯一組裝點。
 | `qa_retreviler` | 社團 FAQ 混合搜尋 | `query`, `top_k` |
 | `notify_staff` | 將問題轉交 Discord 幹部頻道 | `message`, `user_name`, `platform`, `context` |
 | `notify_members` | 幹部依每位社員選定的平台發送通知 | `platform`, `account_id`, `event_id`, `note`, `custom_message` |
-| `generate_checkin_code` | 產生使用者專屬的活動簽到碼連結 | `platform`, `account_id`, `name`, `email` |
 | `bind_email` | 透過 Email 綁定社員身分 | `email`, `platform`, `account_id` |
 | `update_subscribe` | 更新每日課程通知訂閱設定（discord、fb、line） | `platform`, `account_id`, `subscribe` |
 | `update_personal_prompt` | 記錄使用者溝通風格與偏好（最多 100 字） | `platform`, `account_id`, `personal_prompt` |
@@ -149,9 +148,13 @@ ian.bootstrap 是 application ports 與 concrete adapters 的唯一組裝點。
 - 每日 **19:00 UTC+8** 透過 Event MCP 檢查隔天活動，依每位收件者 tier 過濾後發送。
 - 通知內容包含完整活動資訊（課程大綱、講者、是否直播/錄影、講義連結、課程對象等），自動處理空值。
 - 依每位社員的單一 `subscribe` 平台，透過 Discord、Facebook 或 LINE 發送。
-- 支援個人化簽到連結（`QuickRecord`）。
 - 支援 `--daemon` 模式（容器內常駐）、`--dry` 模擬執行、`--date` 指定日期檢查。
 - 發送結果記錄至 Discord Log Channel。
+
+### 活動報名與簽到
+
+- Ian 不代辦活動報名或簽到，也不索取姓名或 Email 產生個人簽到碼。
+- 使用者詢問活動 registration、enrollment、報名或 check-in 時，一律引導至 `https://ntuai.dev/events` 自行完成。
 
 ### Member Application (`ian.application.members`)
 

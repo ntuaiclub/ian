@@ -32,6 +32,7 @@ from ian.infrastructure.agent.runtime import _validate_agent_response_urls
 def test_agent_runtime_allows_prompt_and_tool_result_urls():
     response = (
         "社員申請看 https://bit.ly/ntuai-1142-member ，"
+        "活動報名看 https://ntuai.dev/events ，"
         "講義看 https://docs.example/slides 。"
     )
 
@@ -41,6 +42,7 @@ def test_agent_runtime_allows_prompt_and_tool_result_urls():
     )
 
     assert "https://bit.ly/ntuai-1142-member" in cleaned
+    assert "https://ntuai.dev/events" in cleaned
     assert "https://docs.example/slides" in cleaned
 
 

@@ -50,8 +50,6 @@ def make_sender(**overrides):
 def recipient(platform=Platform.DISCORD):
     return ReminderRecipient(
         user_id=1,
-        name="Member",
-        email="member@example.test",
         platform=platform,
         account_id="account-1",
         tier=MemberTier.LECTURE_EXPLORATION,
