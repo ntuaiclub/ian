@@ -9,7 +9,8 @@
 <p align="center">
   繁體中文 |
   <a href="README.en.md">English</a> |
-  <a href="https://www.facebook.com/ntu.ai.taiwan">粉絲專頁</a> |
+  <a href="https://www.facebook.com/ntu.ai.taiwan">Facebook</a> |
+  <a href="https://instagram.com/ntuaiclub">Instagram</a> |
   <a href="CONTRIBUTION.md">貢獻須知</a> |
   <a href="ARCHITECTURE.md">專案架構</a>
 </p>
