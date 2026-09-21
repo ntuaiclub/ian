@@ -161,14 +161,10 @@ async def test_filters_events_per_recipient_and_aggregates_delivery():
     result = await service.run(date(2026, 7, 12))
 
     assert result.status == "completed"
-    assert "Event 1" in sender.calls[0][1]
-    assert "Event 2" not in sender.calls[0][1]
-    assert "Event 1|Event 2" in sender.calls[1][1]
-    for _recipient, message in sender.calls:
-        assert "簽到碼" not in message
-        assert "QuickRecord" not in message
-        assert "watsonshih.github.io" not in message
-        assert "alice@example.test" not in message
+    assert sender.calls == [
+        (tier_one, "Event 1"),
+        (tier_two, "Event 1|Event 2"),
+    ]
     assert result.delivery is not None
     assert result.delivery.discord_ok == 1
     assert result.delivery.line_fail == 1
