@@ -117,7 +117,7 @@ def test_handle_line_message_defers_loading_api_to_background_task(monkeypatch):
     assert len(captured) == 1
 
 
-def _stub_line_task(monkeypatch, agent_result):
+def _stub_line_task(monkeypatch, agent_result, *, history_outcome=True):
     replies = []
     history = []
 
@@ -144,8 +144,10 @@ def _stub_line_task(monkeypatch, agent_result):
     )
     monkeypatch.setattr(
         line_webhook,
-        "save_chat_history",
-        lambda *args: history.append(args),
+        "chat_history_service",
+        SimpleNamespace(
+            record=lambda **kwargs: history.append(kwargs) or history_outcome,
+        ),
     )
     return replies, history
 
@@ -203,12 +205,46 @@ def test_process_line_message_task_replies_with_message_chunks(monkeypatch, caps
     token, messages = replies[0]
     assert token == "reply-token"
     assert [message.text for message in messages] == ["x" * 2000, "x"]
-    assert history == [("user-1", "Alice", "hello", response, "LINE")]
+    assert history == [
+        {
+            "platform": line_webhook.Platform.LINE,
+            "sender_id": "user-1",
+            "user_name": "Alice",
+            "user_message": "hello",
+            "bot_response": response,
+        }
+    ]
     entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
     assert [entry["event"] for entry in entries] == ["agent_invoked", "reply_sent"]
     assert entries[-1]["message_count"] == 2
     assert "user-1" not in json.dumps(entries)
     assert "hello" not in json.dumps(entries)
+
+
+def test_process_line_message_task_ignores_history_failure(monkeypatch):
+    replies, history = _stub_line_task(
+        monkeypatch,
+        AgentResult(text="private agent reply", should_reply=True),
+        history_outcome=False,
+    )
+
+    asyncio.run(
+        line_webhook.process_line_message_task(
+            "reply-token", "user-1", "private question", "chat-1", "1on1"
+        )
+    )
+
+    assert len(replies) == 1
+    assert replies[0][0] == "reply-token"
+    assert history == [
+        {
+            "platform": line_webhook.Platform.LINE,
+            "sender_id": "user-1",
+            "user_name": "Alice",
+            "user_message": "private question",
+            "bot_response": "private agent reply",
+        }
+    ]
 
 
 def test_process_line_message_task_falls_back_to_push_message(
@@ -232,7 +268,13 @@ def test_process_line_message_task_falls_back_to_push_message(
 
     assert replies[0][0] == "push:chat-1"
     assert history == [
-        ("user-1", "Alice", "private question", "private agent reply", "LINE")
+        {
+            "platform": line_webhook.Platform.LINE,
+            "sender_id": "user-1",
+            "user_name": "Alice",
+            "user_message": "private question",
+            "bot_response": "private agent reply",
+        }
     ]
     entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
     assert entries[-2]["event"] == "external_send_failure"

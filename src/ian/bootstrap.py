@@ -21,6 +21,7 @@
 from dataclasses import dataclass
 
 from ian.application.agent import AgentPort, AgentService
+from ian.application.chat_history import ChatHistoryService, ChatHistoryWriter
 from ian.application.checkins import CheckinLinkService
 from ian.application.events import EventService
 from ian.application.member_notifications import MemberNotificationService
@@ -45,11 +46,13 @@ from ian.infrastructure.notifications.adapters import (
 )
 from ian.infrastructure.notifications.discord import DiscordHttpClient
 from ian.infrastructure.agent.langgraph import LangGraphAgentAdapter
+from ian.infrastructure.chat_history import JsonlChatHistoryWriter
 
 
 @dataclass(frozen=True)
 class ApplicationServices:
     agent: AgentService
+    chat_history: ChatHistoryService
     events: EventService
     members: MemberService
     checkins: CheckinLinkService
@@ -68,6 +71,7 @@ def build_application(
     operational_notifier: OperationalNotifier | None = None,
     agent_adapter: AgentPort | None = None,
     rag_adapter: RagSearchPort | None = None,
+    chat_history_writer: ChatHistoryWriter | None = None,
 ) -> ApplicationServices:
     """Compose application services without performing network I/O."""
     discord: DiscordHttpClient | None = None
@@ -120,8 +124,13 @@ def build_application(
         agent_adapter = LangGraphAgentAdapter(discord, agent_log_channel_id)
     if rag_adapter is None:
         rag_adapter = HybridRagAdapter()
+    if chat_history_writer is None:
+        from ian.config import CHAT_HISTORY_FILE
+
+        chat_history_writer = JsonlChatHistoryWriter(CHAT_HISTORY_FILE)
     return ApplicationServices(
         agent=AgentService(agent_adapter),
+        chat_history=ChatHistoryService(chat_history_writer),
         events=events,
         members=members,
         checkins=CheckinLinkService(members),

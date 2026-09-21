@@ -18,12 +18,14 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
+from datetime import datetime
+
 from flask import Flask, abort, request
 from linebot.exceptions import InvalidSignatureError
 
 from ian.config import FB_VERIFY_TOKEN
+from ian.domain.time import TZ_TPE
 from ian.gateways import facebook_webhook, line_webhook
-from ian.gateways.messaging_common import get_current_time
 from ian.utils.logging import log_event
 
 app = Flask(__name__)
@@ -120,7 +122,7 @@ def line_callback():
 def status():
     return {
         "status": "running",
-        "timestamp": get_current_time()["nowdatetime"],
+        "timestamp": datetime.now(TZ_TPE).strftime("%Y/%m/%d %H:%M:%S"),
         "platforms": sorted(ENABLED_WEBHOOK_PLATFORMS),
     }, 200
 

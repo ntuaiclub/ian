@@ -35,7 +35,7 @@
 
 - **Domain 層**：`ian.domain` 保存 Event、Member 與純規則，不依賴環境設定或外部 SDK。
 - **Application 層**：`ian.application` 保存 Event、Member、提醒、社員通知與 RAG use cases／DTO，以及 application 所擁有的 outbound Protocol。
-- **Infrastructure 層**：`ian.infrastructure` 實作 Payload MCP repositories、Discord／Facebook／LINE notification adapters、LangGraph Agent adapter/runtime，以及 Hybrid RAG 的 BM25／FAISS runtime。
+- **Infrastructure 層**：`ian.infrastructure` 實作 Payload MCP repositories、Discord／Facebook／LINE notification adapters、append-only JSONL chat-history writer、LangGraph Agent adapter/runtime，以及 Hybrid RAG 的 BM25／FAISS runtime。
 - **Entrypoints 層**：`ian.entrypoints` 保存 reminder scheduler 與多程序 supervisor，只負責 process lifecycle 並透過 bootstrap 取得 application services。
 - **Bootstrap**：`ian.bootstrap` 是 repositories、notification adapters、Agent/RAG adapters 與 application services 的唯一組裝點；組裝本身不載入 RAG 模型、不執行網路 I/O、不啟動 thread，也不傳送通知。
 - **Gateway 層**：各平台入口。`ian.gateways.discord_bot` 處理 Discord Slash Commands；`ian.gateways.webhook_server` (Flask) 負責 Webhook route wiring，並委派給 `ian.gateways.facebook_webhook` 與 `ian.gateways.line_webhook` 處理 Facebook Messenger / LINE 平台細節。
@@ -51,7 +51,7 @@ ntuai-watson-agent/
 │   └── ian/
 │       ├── domain/         # 無 I/O 的 models 與純規則
 │       ├── application/    # use cases、DTO 與 outbound Protocols
-│       ├── infrastructure/ # Payload MCP、notification、Agent 與 RAG runtime
+│       ├── infrastructure/ # Payload MCP、notification、chat history、Agent 與 RAG runtime
 │       ├── gateways/       # Discord、Webhook、FastMCP inbound adapters
 │       ├── entrypoints/    # Reminder scheduler 與 process supervisor
 │       ├── bootstrap.py    # 唯一 dependency composition root
@@ -182,7 +182,10 @@ ian.bootstrap 是 application ports 與 concrete adapters 的唯一組裝點。
 
 ### FB / LINE Webhook (`ian.gateways.webhook_server`)
 
-Flask Web Server，接收各平台 webhook 並在背景執行緒處理訊息。`webhook_server` 保留 Flask route 與健康檢查；Facebook Messenger 行為位於 `ian.gateways.facebook_webhook`，LINE 行為位於 `ian.gateways.line_webhook`，共用時間與聊天紀錄 helper 位於 `ian.gateways.messaging_common`。
+Flask Web Server，接收各平台 webhook 並在背景執行緒處理訊息。`webhook_server` 保留 Flask route 與健康檢查；Facebook Messenger 行為位於 `ian.gateways.facebook_webhook`，LINE 行為位於 `ian.gateways.line_webhook`。
+
+Discord、Facebook 與 LINE 透過 application chat-history service 共用 `ian.infrastructure.chat_history.JsonlChatHistoryWriter`，以 UTF-8 append-only JSONL 保存成功送出的文字問答；寫入失敗不影響平台回覆。
+舊版 `chat_history.json` JSON array 不會在 runtime 自動合併或改寫；需要保留舊資料時，應先備份並以一次性離線程序轉換，避免服務啟動時發生重複資料或競態。
 
 | 平台 | 端點 | 說明 |
 |------|------|------|

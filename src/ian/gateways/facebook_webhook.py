@@ -27,10 +27,7 @@ import requests
 from ian.application.agent import AgentRequest
 from ian.bootstrap import get_application
 from ian.config import PAGE_ACCESS_TOKEN
-from ian.gateways.messaging_common import (
-    get_current_time,
-    save_chat_history,
-)
+from ian.domain.members import Platform
 from ian.utils.logging import elapsed_ms, hash_identifier, log_event
 
 PROCESSED_MESSAGES = {}
@@ -38,6 +35,7 @@ PROCESSED_MESSAGES_LOCK = threading.Lock()
 CACHE_EXPIRATION_SECONDS = 600
 application = get_application()
 agent_service = application.agent
+chat_history_service = application.chat_history
 member_service = application.members
 
 
@@ -243,7 +241,6 @@ async def process_message_task(sender_id, user_message, mid=None):
         roles = member.member_role() if member else "非社員"
         account_id = sender_id
 
-        current_time = get_current_time()
         log_event(
             "agent_invoked",
             "facebook_webhook",
@@ -259,7 +256,7 @@ async def process_message_task(sender_id, user_message, mid=None):
                 user_name=user_name,
                 question=user_message,
                 user_role=roles,
-                timestamp=current_time["timestamp"],
+                timestamp=time.time(),
                 channel_id="NaN",
                 platform="FB",
                 account_id=account_id,
@@ -297,12 +294,12 @@ async def process_message_task(sender_id, user_message, mid=None):
             correlation_id,
         )
         await asyncio.to_thread(
-            save_chat_history,
-            sender_id,
-            user_name,
-            user_message,
-            agent_result.text,
-            "FB",
+            chat_history_service.record,
+            platform=Platform.FB,
+            sender_id=sender_id,
+            user_name=user_name,
+            user_message=user_message,
+            bot_response=agent_result.text,
         )
 
     except Exception as e:

@@ -18,8 +18,6 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
-import os
-import json
 import time
 import discord
 from discord.ext import commands
@@ -28,47 +26,17 @@ from discord import app_commands
 from ian.application.agent import AgentRequest
 from ian.bootstrap import get_application
 from ian.config import DISCORD_BOT_TOKEN
-from ian.gateways.messaging_common import get_current_time
+from ian.domain.members import Platform
 from ian.utils.logging import elapsed_ms, hash_identifier, log_event
 
-UPLOAD_DIR = "uploads"
-CHAT_HISTORY_FILE = os.path.join(UPLOAD_DIR, "chat_history.jsonl")
 application = get_application()
 agent_service = application.agent
+chat_history_service = application.chat_history
 member_service = application.members
 
 
 def _interaction_correlation_id(interaction: discord.Interaction) -> str:
     return hash_identifier(getattr(interaction, "id", None) or interaction.user.id)
-
-
-def save_chat_history(sender_id, user_name, user_message, bot_response):
-    """將對話記錄以 JSONL 格式追加寫入檔案。"""
-    os.makedirs(UPLOAD_DIR, exist_ok=True)
-
-    current_time_data = get_current_time()
-    new_entry = {
-        "timestamp": current_time_data["nowdatetime"],
-        "platform": "Discord",
-        "sender_id": sender_id,
-        "user_name": user_name,
-        "user_message": user_message,
-        "bot_response": bot_response,
-    }
-    try:
-        with open(CHAT_HISTORY_FILE, "a", encoding="utf-8") as f:
-            f.write(json.dumps(new_entry, ensure_ascii=False) + "\n")
-    except Exception as e:
-        log_event(
-            "job_failed",
-            "discord_bot",
-            level="error",
-            platform="Discord",
-            status="error",
-            job="save_chat_history",
-            sender_id=sender_id,
-            error=e,
-        )
 
 
 # FAQ 按鈕視圖
@@ -86,8 +54,6 @@ class FAQView(discord.ui.View):
         member = await member_service.find_user_by_platform("Discord", str(user.id))
         db_role = member.member_role() if member else "非社員"
         roles = [db_role]
-
-        current_time = get_current_time()
 
         log_event(
             "request_received",
@@ -116,7 +82,7 @@ class FAQView(discord.ui.View):
                     user_name=user.display_name,
                     question=prompt,
                     user_role=roles,
-                    timestamp=current_time["timestamp"],
+                    timestamp=time.time(),
                     channel_id=str(interaction.channel_id),
                     platform="Discord",
                     account_id=str(user.id),
@@ -228,7 +194,6 @@ async def ask(interaction: discord.Interaction, prompt: str):
     db_role = member.member_role() if member else "非社員"
     roles = [db_role]
 
-    current_time = get_current_time()
     await interaction.response.defer()
 
     log_event(
@@ -259,7 +224,7 @@ async def ask(interaction: discord.Interaction, prompt: str):
                 user_name=user.display_name,
                 question=prompt,
                 user_role=roles,
-                timestamp=current_time["timestamp"],
+                timestamp=time.time(),
                 channel_id=str(interaction.channel_id),
                 platform="Discord",
                 account_id=str(user.id),
@@ -281,7 +246,13 @@ async def ask(interaction: discord.Interaction, prompt: str):
                 await interaction.followup.send(agent_result.reaction_emoji)
             return
         await interaction.followup.send(agent_result.text)
-        save_chat_history(user.name, user.display_name, prompt, agent_result.text)
+        chat_history_service.record(
+            platform=Platform.DISCORD,
+            sender_id=str(user.id),
+            user_name=user.display_name,
+            user_message=prompt,
+            bot_response=agent_result.text,
+        )
         log_event(
             "reply_sent",
             "discord_bot",

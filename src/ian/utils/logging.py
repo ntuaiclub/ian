@@ -51,6 +51,7 @@ _IDENTIFIER_FIELDS = frozenset(
 )
 _CONTENT_FIELDS = frozenset(
     {
+        "bot_response",
         "content",
         "input",
         "message",
