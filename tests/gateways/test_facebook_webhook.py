@@ -177,9 +177,11 @@ def test_process_message_task_handles_no_response_reactions(
     )
     monkeypatch.setattr(
         facebook_webhook,
-        "save_chat_history",
-        lambda *_args: (_ for _ in ()).throw(
-            AssertionError("no-response should not be persisted")
+        "chat_history_service",
+        SimpleNamespace(
+            record=lambda **_kwargs: (_ for _ in ()).throw(
+                AssertionError("no-response should not be persisted")
+            )
         ),
     )
 
@@ -194,6 +196,67 @@ def test_process_message_task_handles_no_response_reactions(
     assert [entry["event"] for entry in entries] == ["agent_invoked", "no_response"]
     assert "sender-1" not in json.dumps(entries)
     assert "hello" not in json.dumps(entries)
+
+
+@pytest.mark.parametrize("history_outcome", [True, False])
+def test_process_message_task_records_reply_without_changing_delivery(
+    monkeypatch, history_outcome
+):
+    typing_calls = []
+    sent_messages = []
+    history_calls = []
+
+    async def fake_typing(recipient_id, action, _correlation_id=None):
+        typing_calls.append((recipient_id, action))
+
+    async def fake_agent(_request):
+        return AgentResult(text="private answer", should_reply=True)
+
+    async def find_member(*_args):
+        return None
+
+    def record_history(**kwargs):
+        history_calls.append(kwargs)
+        return history_outcome
+
+    monkeypatch.setattr(facebook_webhook, "send_typing_indicator", fake_typing)
+    monkeypatch.setattr(facebook_webhook, "get_fb_user_profile", lambda _id: "Alice")
+    monkeypatch.setattr(
+        facebook_webhook.member_service, "find_user_by_platform", find_member
+    )
+    monkeypatch.setattr(facebook_webhook.agent_service, "handle", fake_agent)
+    monkeypatch.setattr(
+        facebook_webhook,
+        "send_message",
+        lambda *args: sent_messages.append(args),
+    )
+    monkeypatch.setattr(
+        facebook_webhook,
+        "chat_history_service",
+        SimpleNamespace(record=record_history),
+    )
+
+    asyncio.run(
+        facebook_webhook.process_message_task(
+            "sender-1", "private question", mid="mid-1"
+        )
+    )
+
+    assert typing_calls == [
+        ("sender-1", "typing_on"),
+        ("sender-1", "typing_off"),
+    ]
+    assert len(sent_messages) == 1
+    assert sent_messages[0][:2] == ("sender-1", "private answer")
+    assert history_calls == [
+        {
+            "platform": facebook_webhook.Platform.FB,
+            "sender_id": "sender-1",
+            "user_name": "Alice",
+            "user_message": "private question",
+            "bot_response": "private answer",
+        }
+    ]
 
 
 @pytest.mark.parametrize(

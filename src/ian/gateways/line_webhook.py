@@ -33,17 +33,15 @@ from ian.config import (
     LINE_CHANNEL_ACCESS_TOKEN,
     LINE_CHANNEL_SECRET,
 )
+from ian.domain.members import Platform
 from ian.domain.messages import split_message_chunks
-from ian.gateways.messaging_common import (
-    get_current_time,
-    save_chat_history,
-)
 from ian.utils.logging import elapsed_ms, hash_identifier, log_event
 
 line_bot_api = LineBotApi(LINE_CHANNEL_ACCESS_TOKEN)
 line_handler = WebhookHandler(LINE_CHANNEL_SECRET)
 application = get_application()
 agent_service = application.agent
+chat_history_service = application.chat_history
 member_service = application.members
 
 
@@ -161,7 +159,6 @@ async def process_line_message_task(
         )
         roles = member.member_role() if member else "非社員"
 
-        current_time = get_current_time()
         log_event(
             "agent_invoked",
             "line_webhook",
@@ -178,7 +175,7 @@ async def process_line_message_task(
                 user_name=user_name,
                 question=user_message,
                 user_role=roles,
-                timestamp=current_time["timestamp"],
+                timestamp=time.time(),
                 channel_id=str(chat_id),
                 platform="LINE",
                 account_id=user_id,
@@ -283,12 +280,12 @@ async def process_line_message_task(
                     return
 
         await asyncio.to_thread(
-            save_chat_history,
-            user_id,
-            user_name,
-            user_message,
-            agent_result.text,
-            "LINE",
+            chat_history_service.record,
+            platform=Platform.LINE,
+            sender_id=user_id,
+            user_name=user_name,
+            user_message=user_message,
+            bot_response=agent_result.text,
         )
 
     except Exception as e:

@@ -203,6 +203,7 @@ def test_sanitize_log_fields_redacts_nested_sensitive_values():
             "email": "member@example.test",
             "access_token": "token-123",
             "user_message": "private question",
+            "bot_response": "private answer",
             "query": "private search",
             "context": {
                 "sender_id": "sender-123",
@@ -218,6 +219,7 @@ def test_sanitize_log_fields_redacts_nested_sensitive_values():
         "member@example.test",
         "token-123",
         "private question",
+        "private answer",
         "private search",
         "sender-123",
         "key-123",

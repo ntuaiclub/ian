@@ -74,6 +74,7 @@ def test_config_loads_project_dotenv_before_reading_environment(monkeypatch, tmp
     spec.loader.exec_module(module)
 
     assert module.PROJECT_ROOT == project
+    assert module.CHAT_HISTORY_FILE == project / "uploads" / "chat_history.jsonl"
     assert module.DISCORD_BOT_TOKEN == "token-from-dotenv"
     assert module.DISCORD_LOG_CHANNEL_ID == "789"
     assert module.DISCORD_LOG_CHANNEL_ID_INT == 789

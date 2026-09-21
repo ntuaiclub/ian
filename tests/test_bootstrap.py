@@ -65,14 +65,21 @@ class FakeAgentAdapter:
         raise AssertionError("composition must not start agent threads")
 
 
+class FakeChatHistoryWriter:
+    def append(self, entry):
+        raise AssertionError("composition must not persist chat history")
+
+
 def test_build_application_composes_dependencies_without_io():
     operational = FakeOperationalNotifier()
     agent = FakeAgentAdapter()
+    chat_history = FakeChatHistoryWriter()
     application = build_application(
         FakeCaller(),
         FakeSender(),
         operational,
         agent,
+        chat_history_writer=chat_history,
     )
 
     assert isinstance(application.events.repository, PayloadMcpEventRepository)
@@ -84,6 +91,7 @@ def test_build_application_composes_dependencies_without_io():
     assert application.member_notifications.members is application.members
     assert application.operational_notifications is operational
     assert application.agent.adapter is agent
+    assert application.chat_history.writer is chat_history
     assert isinstance(application.rag.adapter, HybridRagAdapter)
 
 
@@ -132,6 +140,7 @@ heavy_prefixes = (
 )
 payload = {
     "adapter_type": type(application.agent.adapter).__name__,
+    "chat_history_writer_type": type(application.chat_history.writer).__name__,
     "rag_adapter_type": type(application.rag.adapter).__name__,
     "heavy_modules": sorted(
         module
@@ -176,6 +185,7 @@ print(json.dumps(payload))
 
     assert payload == {
         "adapter_type": "LangGraphAgentAdapter",
+        "chat_history_writer_type": "JsonlChatHistoryWriter",
         "rag_adapter_type": "HybridRagAdapter",
         "heavy_modules": [],
         "eager_agent_modules": [],
