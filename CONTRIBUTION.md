@@ -1,5 +1,7 @@
 # CONTRIBUTION.md
 
+繁體中文 | [English](CONTRIBUTION.en.md)
+
 這份文件給本專案的貢獻者參考。開始修改前，請先讀相關檔案，而不是只依賴這份摘要。
 
 ## 先讀這些

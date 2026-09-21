@@ -10,7 +10,7 @@
   <a href="README.md">繁體中文</a> |
   English |
   <a href="https://www.facebook.com/ntu.ai.taiwan">Facebook</a> |
-  <a href="CONTRIBUTION.md">Contributing</a> |
+  <a href="CONTRIBUTION.en.md">Contributing</a> |
   <a href="ARCHITECTURE.md">Architecture</a>
 </p>
 
