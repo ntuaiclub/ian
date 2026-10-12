@@ -121,7 +121,7 @@ def test_serve_all_waits_for_mcp_before_starting_other_services(capsys):
         "job_started",
         "service_started",
         "health_wait_started",
-        "service_ready",
+        "service_live",
         "service_started",
         "service_started",
         "service_started",

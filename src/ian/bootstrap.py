@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from ian.application.agent import AgentPort, AgentService
 from ian.application.chat_history import ChatHistoryService, ChatHistoryWriter
 from ian.application.events import EventService
+from ian.application.health import HealthService
 from ian.application.member_notifications import MemberNotificationService
 from ian.application.members import MemberService
 from ian.application.notifications import NotificationSender, OperationalNotifier
@@ -46,6 +47,12 @@ from ian.infrastructure.notifications.adapters import (
 from ian.infrastructure.notifications.discord import DiscordHttpClient
 from ian.infrastructure.agent.langgraph import LangGraphAgentAdapter
 from ian.infrastructure.chat_history import JsonlChatHistoryWriter
+from ian.infrastructure.health import (
+    PayloadMcpReadinessProbe,
+    PlatformReadinessProbe,
+    RagReadinessProbe,
+    build_platform_configuration,
+)
 
 
 @dataclass(frozen=True)
@@ -53,6 +60,7 @@ class ApplicationServices:
     agent: AgentService
     chat_history: ChatHistoryService
     events: EventService
+    health: HealthService
     members: MemberService
     reminders: DailyReminderService
     member_notifications: MemberNotificationService
@@ -122,6 +130,14 @@ def build_application(
         agent_adapter = LangGraphAgentAdapter(discord, agent_log_channel_id)
     if rag_adapter is None:
         rag_adapter = HybridRagAdapter()
+    rag = RagService(rag_adapter)
+    health = HealthService(
+        (
+            PayloadMcpReadinessProbe(caller),
+            RagReadinessProbe(rag),
+            PlatformReadinessProbe(build_platform_configuration()),
+        )
+    )
     if chat_history_writer is None:
         from ian.config import CHAT_HISTORY_FILE
 
@@ -130,6 +146,7 @@ def build_application(
         agent=AgentService(agent_adapter),
         chat_history=ChatHistoryService(chat_history_writer),
         events=events,
+        health=health,
         members=members,
         reminders=DailyReminderService(events, members, notification_sender),
         member_notifications=MemberNotificationService(
@@ -138,7 +155,7 @@ def build_application(
             notification_sender,
         ),
         operational_notifications=operational_notifier,
-        rag=RagService(rag_adapter),
+        rag=rag,
     )
 
 

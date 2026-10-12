@@ -51,6 +51,8 @@ class PayloadMcpSchemaError(PayloadMcpError):
 class McpToolCaller(Protocol):
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> str: ...
 
+    async def list_tools(self) -> set[str]: ...
+
 
 class StreamableHttpMcpToolCaller:
     """Execute one authenticated MCP tool call over Streamable HTTP."""
@@ -116,6 +118,38 @@ class StreamableHttpMcpToolCaller:
         if not text_parts:
             raise PayloadMcpSchemaError(f"MCP tool {name} returned no text content")
         return "\n".join(text_parts)
+
+    async def list_tools(self) -> set[str]:
+        """Discover available capabilities without reading application data."""
+        self._require_config()
+        timeout = httpx.Timeout(float(self.timeout_seconds))
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+
+        try:
+            async with httpx.AsyncClient(
+                headers=headers,
+                timeout=timeout,
+                follow_redirects=True,
+            ) as http_client:
+                async with streamable_http_client(
+                    self.url,
+                    http_client=http_client,
+                ) as (read_stream, write_stream, _):
+                    async with ClientSession(
+                        read_stream,
+                        write_stream,
+                        read_timeout_seconds=timedelta(seconds=self.timeout_seconds),
+                    ) as session:
+                        await session.initialize()
+                        result = await session.list_tools()
+        except PayloadMcpError:
+            raise
+        except Exception as error:
+            raise PayloadMcpTransportError(
+                f"MCP capability discovery failed ({type(error).__name__})"
+            ) from error
+
+        return {tool.name for tool in result.tools}
 
 
 _JSON_FENCE = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)

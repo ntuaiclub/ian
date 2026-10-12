@@ -21,6 +21,8 @@
 import warnings
 
 from mcp.server.fastmcp import FastMCP
+from starlette.responses import JSONResponse
+from starlette.routing import Route
 
 from ian.application.member_notifications import (
     EventNotFoundError,
@@ -46,6 +48,7 @@ member_service = application.members
 member_notification_service = application.member_notifications
 operational_notifier = application.operational_notifications
 rag_service = application.rag
+health_service = application.health
 
 
 def initialize_dependencies() -> None:
@@ -61,6 +64,27 @@ def initialize_dependencies() -> None:
             operation="initialize_data_sources",
             error=e,
         )
+
+
+async def health_check(_request) -> JSONResponse:
+    """Report process liveness without probing dependencies."""
+    return JSONResponse({"status": "ok"})
+
+
+async def readiness_check(_request) -> JSONResponse:
+    """Report dependency readiness without exposing sensitive values."""
+    report = await health_service.readiness()
+    return JSONResponse(
+        report.as_dict(),
+        status_code=200 if report.ready else 503,
+    )
+
+
+def configure_health_routes() -> None:
+    mcp._custom_starlette_routes = [
+        Route("/health", health_check, methods=["GET"]),
+        Route("/ready", readiness_check, methods=["GET"]),
+    ]
 
 
 def _log_mcp_tool_failure(
@@ -447,16 +471,8 @@ def run_mcp_server(
 
     # Stateless Streamable HTTP avoids the legacy SSE session-writer leak.
     import uvicorn
-    from starlette.responses import JSONResponse
-    from starlette.routing import Route
 
-    async def health_check(request):
-        """Health check endpoint."""
-        return JSONResponse({"status": "ok"})
-
-    mcp._custom_starlette_routes = [
-        Route("/health", health_check, methods=["GET"]),
-    ]
+    configure_health_routes()
 
     log_event(
         "service_started",

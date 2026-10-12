@@ -26,6 +26,7 @@ from linebot.exceptions import InvalidSignatureError
 from ian.config import FB_VERIFY_TOKEN
 from ian.domain.time import TZ_TPE
 from ian.gateways import facebook_webhook, line_webhook
+from ian.infrastructure.health import build_platform_configuration
 from ian.utils.logging import log_event
 
 app = Flask(__name__)
@@ -37,6 +38,7 @@ PLATFORM_ALIASES = {
     "line": {"LINE"},
 }
 ENABLED_WEBHOOK_PLATFORMS = PLATFORM_ALIASES["all"].copy()
+PLATFORM_CONFIGURATION = build_platform_configuration()
 
 
 def configure_platforms(platform: str = "all") -> set[str]:
@@ -120,10 +122,20 @@ def line_callback():
 
 @app.route("/status", methods=["GET"])
 def status():
+    platform_state = PLATFORM_CONFIGURATION.webhook_state(
+        ENABLED_WEBHOOK_PLATFORMS
+    )
+    ready = all(
+        state["configured"]
+        for state in platform_state.values()
+        if state["enabled"]
+    )
     return {
         "status": "running",
+        "ready": ready,
         "timestamp": datetime.now(TZ_TPE).strftime("%Y/%m/%d %H:%M:%S"),
         "platforms": sorted(ENABLED_WEBHOOK_PLATFORMS),
+        "platform_state": platform_state,
     }, 200
 
 

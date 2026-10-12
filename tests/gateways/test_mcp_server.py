@@ -22,12 +22,14 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from ian.application.member_notifications import (
     EventNotFoundError,
     EventNotificationResult,
 )
+from ian.application.health import ReadinessCheck, ReadinessReport
 from ian.application.notifications import DeliveryReport
 from ian.application.rag import RagSearchResult
 from ian.domain.events import Event
@@ -49,6 +51,76 @@ def test_initialize_dependencies_delegates_to_rag_service(monkeypatch):
     mcp_server.initialize_dependencies()
 
     assert calls == [True]
+
+
+def test_health_check_reports_liveness_without_readiness_probe(monkeypatch):
+    monkeypatch.setattr(
+        mcp_server.health_service,
+        "readiness",
+        lambda: (_ for _ in ()).throw(AssertionError("must not probe")),
+    )
+
+    response = _run(mcp_server.health_check(None))
+
+    assert response.status_code == 200
+    assert json.loads(response.body) == {"status": "ok"}
+
+
+@pytest.mark.parametrize(
+    ("ready", "status_code"),
+    [(True, 200), (False, 503)],
+)
+def test_readiness_check_uses_aggregate_status(monkeypatch, ready, status_code):
+    report = ReadinessReport(
+        (ReadinessCheck("rag", ready=ready, reason=None if ready else "failed"),)
+    )
+
+    async def readiness():
+        return report
+
+    monkeypatch.setattr(mcp_server.health_service, "readiness", readiness)
+
+    response = _run(mcp_server.readiness_check(None))
+
+    assert response.status_code == status_code
+    assert json.loads(response.body)["status"] == (
+        "ready" if ready else "not_ready"
+    )
+
+
+def test_mcp_configures_liveness_and_readiness_routes():
+    mcp_server.configure_health_routes()
+
+    assert [route.path for route in mcp_server.mcp._custom_starlette_routes] == [
+        "/health",
+        "/ready",
+    ]
+
+
+def test_mcp_asgi_app_serves_health_routes(monkeypatch):
+    report = ReadinessReport((ReadinessCheck("rag", ready=False),))
+
+    async def readiness():
+        return report
+
+    monkeypatch.setattr(mcp_server.health_service, "readiness", readiness)
+    mcp_server.configure_health_routes()
+    app = mcp_server.mcp.streamable_http_app()
+
+    async def request_routes():
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://test",
+        ) as client:
+            return await client.get("/health"), await client.get("/ready")
+
+    health, readiness = _run(request_routes())
+
+    assert health.status_code == 200
+    assert health.json() == {"status": "ok"}
+    assert readiness.status_code == 503
+    assert readiness.json()["status"] == "not_ready"
 
 
 def test_qa_retriever_reports_uninitialized_rag(monkeypatch):

@@ -34,6 +34,11 @@ from ian.infrastructure.payload_mcp.member_repository import (
     PayloadMcpMemberRepository,
 )
 from ian.infrastructure.rag.adapter import HybridRagAdapter
+from ian.infrastructure.health import (
+    PayloadMcpReadinessProbe,
+    PlatformReadinessProbe,
+    RagReadinessProbe,
+)
 
 
 class FakeCaller:
@@ -92,6 +97,11 @@ def test_build_application_composes_dependencies_without_io():
     assert application.agent.adapter is agent
     assert application.chat_history.writer is chat_history
     assert isinstance(application.rag.adapter, HybridRagAdapter)
+    assert [type(probe) for probe in application.health.probes] == [
+        PayloadMcpReadinessProbe,
+        RagReadinessProbe,
+        PlatformReadinessProbe,
+    ]
 
 
 def test_get_application_builds_default_graph_once(monkeypatch):

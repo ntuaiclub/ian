@@ -25,6 +25,7 @@ import pytest
 from linebot.exceptions import InvalidSignatureError
 
 from ian.gateways import facebook_webhook, line_webhook, webhook_server
+from ian.infrastructure.health import PlatformConfiguration
 
 
 def _invalid_signature_error():
@@ -108,6 +109,34 @@ def test_webhook_status_reports_enabled_platforms():
         assert payload["platforms"] == ["LINE"]
     finally:
         webhook_server.configure_platforms("all")
+
+
+def test_webhook_status_reports_non_secret_platform_state(monkeypatch):
+    configuration = PlatformConfiguration.from_values(
+        page_access_token="private-page-token",
+        facebook_verify_token="private-verify-token",
+        line_channel_access_token="",
+        line_channel_secret="private-line-secret",
+        discord_bot_token="private-discord-token",
+        discord_log_channel_id="private-log-channel",
+        staff_notification_channel_id="private-staff-channel",
+        allowed_discord_channels=[],
+        allowed_line_groups=["private-line-group"],
+    )
+    monkeypatch.setattr(webhook_server, "PLATFORM_CONFIGURATION", configuration)
+    webhook_server.configure_platforms("all")
+
+    response = webhook_server.app.test_client().get("/status")
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload is not None
+    assert payload["ready"] is False
+    assert payload["platform_state"] == {
+        "Facebook": {"enabled": True, "configured": True},
+        "LINE": {"enabled": True, "configured": False},
+    }
+    assert "private" not in response.text
 
 
 def test_webhook_runner_configures_platform_before_starting_server(monkeypatch):

@@ -7,28 +7,23 @@
         │
         ▼
   ┌──────────────────────────┐    ┌──────────────────────────┐
-  │ Gateway 層               │    │ MCP Tool Server           │
+  │ Gateway 層               │    │ MCP Tool Server          |
   │ ian.gateways             │◄──►│ ian.gateways             │
   │ - discord_bot            │    │ - mcp_server             │
   │ - webhook_server         │    │ - RagService             │
   │ - facebook_webhook       │    │                          │
   │ - line_webhook           │    │                          │
-  │                          │    │ - 課程 / 通知 / 綁定工具 │
+  │                          │    │ - 課程 / 通知 / 綁定工具    │
   └────────────┬─────────────┘    └────────────┬─────────────┘
                │                               ├──────────────┐
                ▼                               ▼              ▼
-  ┌──────────────────────────┐
-  │ Agent Infrastructure     │
-  │ ian.infrastructure.agent │
-  │ - runtime / sessions     │
-  │ - LangGraph ReAct        │
+  ┌──────────────────────────┐ ┌──────────────────┐ ┌──────────────────┐
+  │ Agent Infrastructure     │ │ Member MCP       │ │ RAG Infra        │
+  │ ian.infrastructure.agent │ │ Users / Members  │ │ BM25 / FAISS     │
+  │ - runtime / sessions     │ │ ntuai.dev        │ │ embeddings/cache │
+  │ - LangGraph ReAct        │ └──────────────────┘ └──────────────────┘
   │ - Gemini 3 Flash         │
   └──────────────────────────┘
-                               ┌──────────────────┐ ┌──────────────────┐
-                               │ Member MCP       │ │ RAG Infra        │
-                               │ Users / Members  │ │ BM25 / FAISS     │
-                               │ ntuai.dev        │ │ embeddings/cache │
-                               └──────────────────┘ └──────────────────┘
 ```
 
 ### 各層職責
@@ -195,7 +190,42 @@ Discord、Facebook 與 LINE 透過 application chat-history service 共用 `ian.
 | Facebook | `GET /` | Webhook 驗證 |
 | Facebook | `POST /` | 接收 Messenger 私訊 |
 | LINE | `POST /line/callback` | 白名單群組內訊息 |
-| 狀態 | `GET /status` | 服務健康檢查 |
+| 狀態 | `GET /status` | Webhook liveness 與平台設定摘要 |
+
+## 服務健康與依賴就緒狀態
+
+Liveness 只表示 process 已啟動並能回應 HTTP，不探測外部服務。Readiness
+表示服務所需的 dependency 已初始化、可連線且具備必要 capability。外部依賴暫時
+失敗時，process 可能仍然 alive，但尚未 ready。
+
+| 端點 | 用途 | 成功 | 未就緒 |
+|------|------|------|--------|
+| Webhook `GET :5190/status` | Webhook liveness、啟用平台與非敏感設定狀態 | `200` | 仍回 `200`，以 `ready: false` 表示平台設定不完整 |
+| MCP `GET :5191/health` | MCP process liveness，不執行 dependency probe | `200` | process 無法回應 |
+| MCP `GET :5191/ready` | Member data、course data、RAG 與平台設定摘要 | `200` | 必要 dependency 未就緒時回 `503` |
+
+MCP readiness 使用 MCP initialize 與 `list_tools` 確認 ntuai.dev Payload MCP 可達，並分別檢查 member data 所需的 Users/Memberships tools 與 course data 所需的 Events tool。這個 probe 不查詢社員、活動或其他應用資料。RAG check 只讀取既有初始化狀態，不會因健康檢查而載入模型或重建索引。
+
+平台狀態只公開 `configured` boolean 與 allowlist 數量，不公開 token、API key、channel/group ID、私人訊息或底層例外內容。平台設定缺漏會將 MCP readiness 標成 `degraded`，但不會使 member data、course data 與 RAG 已就緒的 MCP process 回傳
+`503`。
+
+本機可用以下命令區分 liveness 與 readiness：
+
+```bash
+curl --fail http://localhost:5191/health
+curl --fail http://localhost:5191/ready
+curl --fail http://localhost:5190/status
+```
+
+Docker image 以 MCP `/ready` 作為 container healthcheck。MCP port 不映射到 host，避免直接暴露操作型 tools；需要查看完整回應時可在容器內執行：
+
+```bash
+docker compose ps
+docker compose exec ntuai-watson-agent \
+  curl --fail http://localhost:5191/ready
+```
+
+Supervisor 啟動其他 process 前只等待 MCP `/health`，並記錄 `service_live`，不等待 `/ready`。因此上游短暫故障不會阻止 webhook、reminder 與 Discord process 啟動，而 Docker health 仍會呈現 dependency readiness。
 
 **訊息處理特性：**
 

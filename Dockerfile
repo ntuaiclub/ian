@@ -53,4 +53,7 @@ RUN uv sync --locked --no-dev
 
 EXPOSE 5190
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD curl --fail --silent --show-error http://localhost:5191/ready >/dev/null || exit 1
+
 CMD ["ian", "serve"]

@@ -105,9 +105,9 @@ def serve_all(
         )
         wait_for_http(f"http://localhost:{mcp_port}/health", health_timeout)
         log_event(
-            "service_ready",
+            "service_live",
             "service_supervisor",
-            status="ready",
+            status="live",
             service="mcp",
         )
 

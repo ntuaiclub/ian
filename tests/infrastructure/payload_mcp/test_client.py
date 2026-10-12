@@ -18,7 +18,13 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
+import asyncio
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+
 import pytest
+
+from ian.infrastructure.payload_mcp import client
 
 from ian.infrastructure.payload_mcp.client import (
     PayloadMcpConfigurationError,
@@ -48,3 +54,55 @@ def test_parse_payload_documents_rejects_invalid_text_contract(text):
 def test_streamable_caller_requires_complete_shared_configuration():
     with pytest.raises(PayloadMcpConfigurationError):
         StreamableHttpMcpToolCaller("", "", 20)._require_config()
+
+
+def test_streamable_caller_lists_tools_without_calling_application_tools(monkeypatch):
+    calls = []
+
+    class FakeHttpClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+    class FakeSession:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def initialize(self):
+            calls.append("initialize")
+
+        async def list_tools(self):
+            calls.append("list_tools")
+            return SimpleNamespace(
+                tools=[SimpleNamespace(name="findUsers"), SimpleNamespace(name="findEvents")]
+            )
+
+        async def call_tool(self, *_args, **_kwargs):
+            raise AssertionError("readiness must not call application tools")
+
+    @asynccontextmanager
+    async def fake_streamable_http_client(*_args, **_kwargs):
+        yield object(), object(), None
+
+    monkeypatch.setattr(client.httpx, "AsyncClient", lambda **_kwargs: FakeHttpClient())
+    monkeypatch.setattr(client, "streamable_http_client", fake_streamable_http_client)
+    monkeypatch.setattr(client, "ClientSession", FakeSession)
+
+    tools = asyncio.run(
+        StreamableHttpMcpToolCaller(
+            "https://example.test/mcp",
+            "private-key",
+            1,
+        ).list_tools()
+    )
+
+    assert tools == {"findUsers", "findEvents"}
+    assert calls == ["initialize", "list_tools"]
