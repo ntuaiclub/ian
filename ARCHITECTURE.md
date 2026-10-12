@@ -227,6 +227,57 @@ docker compose exec ntuai-watson-agent \
 
 Supervisor 啟動其他 process 前只等待 MCP `/health`，並記錄 `service_live`，不等待 `/ready`。因此上游短暫故障不會阻止 webhook、reminder 與 Discord process 啟動，而 Docker health 仍會呈現 dependency readiness。
 
+## OpenTelemetry Metrics
+
+Ian 使用 application-owned `ApplicationMetrics` facade 定義固定的 metric 與低基數
+dimensions，並由 infrastructure 的 OpenTelemetry adapter 實作。Application、gateway
+與 entrypoint 不直接依賴 OTel SDK，也不建立任意名稱或任意 labels。
+
+| Metric | Instrument | Dimensions |
+|--------|------------|------------|
+| `ian.gateway.messages` | Counter | `platform`, `outcome` |
+| `ian.agent.calls` | Counter | `outcome` |
+| `ian.agent.call.duration` | Histogram (seconds) | `outcome` |
+| `ian.mcp.tool.calls` | Counter | `tool`, `outcome` |
+| `ian.mcp.tool.duration` | Histogram (seconds) | `tool`, `outcome` |
+| `ian.reminder.runs` | Counter | `outcome` |
+| `ian.reminder.run.duration` | Histogram (seconds) | `outcome` |
+| `ian.reminder.events` | Histogram | none |
+| `ian.reminder.members.notified` | Histogram | none |
+| `ian.reminder.notifications` | Counter | `platform`, `outcome` |
+| `ian.member.operations` | Counter | `operation`, `outcome` |
+| `ian.member.loaded` | Histogram | `operation`, `outcome` |
+| `ian.rag.initializations` | Counter | `outcome` |
+| `ian.rag.initialized` | Gauge | none |
+| `ian.rag.searches` | Counter | `outcome` |
+| `ian.rag.search.duration` | Histogram (seconds) | `outcome` |
+| `ian.rag.search.results` | Histogram | `outcome` |
+| `ian.dependency.checks` | Counter | `dependency`, `outcome` |
+| `ian.dependency.check.duration` | Histogram (seconds) | `dependency`, `outcome` |
+
+允許的 dimensions 是程式碼中的固定集合。Metrics 不包含 user/account/channel ID、
+Email、prompt、message、query、token、credential URL 或 exception text。
+
+`ian serve` 的 MCP、webhook、reminder 與 Discord 是獨立 processes。各 CLI child
+process 在 import runtime 前建立自己的 `MeterProvider`，並分別使用
+`ian-mcp`、`ian-webhook`、`ian-reminder`、`ian-discord` service name：
+
+```dotenv
+OTEL_SERVICE_NAME=ian
+OTEL_METRICS_EXPORTER=none
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+OTEL_METRIC_EXPORT_INTERVAL=60000
+```
+
+- `OTEL_METRICS_EXPORTER=none`：使用 process-local `InMemoryMetricReader`，不啟動
+  exporter、不要求外部 backend。
+- `OTEL_METRICS_EXPORTER=otlp`：以 OTLP/gRPC 定期輸出；Collector 暫時無法連線時
+  不影響核心 request/job 執行。
+
+Collector、Prometheus-compatible endpoint、Prometheus scrape 與 Grafana dashboard
+由後續 observability endpoint 工作提供；本階段不新增 `/metrics` endpoint，也不讓
+外部監控 stack 成為 Ian 的啟動必要條件。
+
 **訊息處理特性：**
 
 - 訊息去重快取（600 秒過期）防止重複處理。
@@ -247,6 +298,7 @@ Supervisor 啟動其他 process 前只等待 MCP `/health`，並記錄 `service_
 | Web Framework | Flask (async) |
 | Bot SDK | discord.py、LINE Bot SDK |
 | Transport | MCP streamable-http via Starlette + Uvicorn |
+| Observability | OpenTelemetry Metrics（in-memory / optional OTLP） |
 | 社員資料 | ntuai.dev MCP（Users + Memberships） |
 | 活動資料 | ntuai.dev Payload MCP（Events） |
 | Infrastructure | Docker (NVIDIA CUDA 12.1)、Docker Compose、ngrok |

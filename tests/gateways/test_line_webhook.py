@@ -40,6 +40,7 @@ def _event(text, *, group_id=None):
 
 
 def test_handle_line_message_skips_non_whitelisted_group(monkeypatch, capsys):
+    metric_records = []
     monkeypatch.setattr(line_webhook, "LINE_ALLOWED_GROUPS", ["allowed-group"])
     monkeypatch.setattr(
         line_webhook.line_bot_api,
@@ -62,11 +63,17 @@ def test_handle_line_message_skips_non_whitelisted_group(monkeypatch, capsys):
             AssertionError("background task should not start")
         ),
     )
+    monkeypatch.setattr(
+        line_webhook.metrics_service,
+        "record_gateway_message",
+        lambda platform, outcome: metric_records.append((platform, outcome)),
+    )
 
     assert line_webhook.handle_line_message(_event("hello", group_id="blocked")) is None
     entry = json.loads(capsys.readouterr().err)
     assert entry["event"] == "request_ignored"
     assert entry["status"] == "unauthorized"
+    assert metric_records == [("line", "ignored")]
     assert "blocked" not in json.dumps(entry)
     assert "user-1" not in json.dumps(entry)
 

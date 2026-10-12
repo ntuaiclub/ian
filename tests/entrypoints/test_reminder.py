@@ -41,6 +41,12 @@ def stub_result(monkeypatch, result):
 
 
 def test_run_once_logs_no_events(monkeypatch, capsys):
+    metric_records = []
+    monkeypatch.setattr(
+        reminder.metrics_service,
+        "record_reminder_run",
+        lambda outcome, duration, **counts: metric_records.append((outcome, counts)),
+    )
     stub_result(monkeypatch, ReminderRunResult("no_events", (), 0))
 
     reminder.run_once(target_date=TARGET_DATE)
@@ -48,6 +54,9 @@ def test_run_once_logs_no_events(monkeypatch, capsys):
     completed = json.loads(capsys.readouterr().err.splitlines()[-1])
     assert completed["status"] == "success"
     assert completed["event_count"] == 0
+    assert metric_records == [
+        ("success", {"events_found": 0, "members_notified": 0})
+    ]
 
 
 def test_run_once_uses_one_asyncio_boundary(monkeypatch):

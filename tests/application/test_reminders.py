@@ -19,6 +19,7 @@
 #
 
 from datetime import date
+from unittest.mock import Mock, call
 
 import pytest
 
@@ -150,12 +151,14 @@ async def test_dry_run_never_calls_sender():
 @pytest.mark.asyncio
 async def test_filters_events_per_recipient_and_aggregates_delivery():
     sender = SenderStub([True, False])
+    metrics = Mock()
     tier_one = recipient("account-1", MemberTier.LECTURE_EXPLORATION)
     tier_two = recipient("account-2", MemberTier.HANDS_ON, Platform.LINE)
     service = DailyReminderService(
         EventsStub([event(1), event(2, tier=2)]),
         MembersStub([tier_one, tier_two]),
         sender,
+        metrics,
     )
 
     result = await service.run(date(2026, 7, 12))
@@ -169,6 +172,10 @@ async def test_filters_events_per_recipient_and_aggregates_delivery():
     assert result.delivery.discord_ok == 1
     assert result.delivery.line_fail == 1
     assert result.delivery.status == "partial_failure"
+    assert metrics.record_reminder_notification.call_args_list == [
+        call("discord", "success"),
+        call("line", "failure"),
+    ]
 
 
 @pytest.mark.asyncio

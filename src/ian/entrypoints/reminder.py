@@ -37,6 +37,7 @@ _FAILURE_NOTIFICATIONS = {
 application = get_application()
 reminder_service = application.reminders
 operational_notifier = application.operational_notifications
+metrics_service = application.metrics
 
 
 def _run_coroutine(
@@ -101,87 +102,105 @@ async def _report_job_failure(
 
 async def _run_once(target_date: str | None = None, dry: bool = False) -> None:
     started_at = time.monotonic()
-    now = datetime.now(TZ_TPE)
-
-    if target_date is None:
-        tomorrow = now + timedelta(days=1)
-        target_date = tomorrow.strftime("%Y-%m-%d")
-
-    normalized_target_date = target_date.replace("/", "-")
-    try:
-        parsed_target_date = date.fromisoformat(normalized_target_date)
-    except ValueError as error:
-        await _report_job_failure(started_at, target_date, "load_events", error)
-        return
-
-    log_event(
-        "job_started",
-        "reminder_runner",
-        status="started",
-        job="daily_reminder",
-        target_date=target_date,
-        dry_run=dry,
-    )
+    outcome = "error"
+    events_found = 0
+    members_notified = 0
 
     try:
-        result = await reminder_service.run(parsed_target_date, dry=dry)
-    except ReminderLoadError as error:
-        await _report_job_failure(started_at, target_date, error.stage, error)
-        return
+        now = datetime.now(TZ_TPE)
 
-    if result.status == "no_events":
+        if target_date is None:
+            tomorrow = now + timedelta(days=1)
+            target_date = tomorrow.strftime("%Y-%m-%d")
+
+        normalized_target_date = target_date.replace("/", "-")
+        try:
+            parsed_target_date = date.fromisoformat(normalized_target_date)
+        except ValueError as error:
+            await _report_job_failure(started_at, target_date, "load_events", error)
+            return
+
         log_event(
-            "job_completed",
+            "job_started",
             "reminder_runner",
-            status="success",
-            duration_ms=elapsed_ms(started_at),
+            status="started",
             job="daily_reminder",
             target_date=target_date,
-            event_count=0,
-            recipient_count=0,
+            dry_run=dry,
         )
-        return
 
-    if result.status == "dry_run":
+        try:
+            result = await reminder_service.run(parsed_target_date, dry=dry)
+        except ReminderLoadError as error:
+            await _report_job_failure(started_at, target_date, error.stage, error)
+            return
+
+        events_found = result.event_count
+        if result.status == "no_events":
+            outcome = "success"
+            log_event(
+                "job_completed",
+                "reminder_runner",
+                status="success",
+                duration_ms=elapsed_ms(started_at),
+                job="daily_reminder",
+                target_date=target_date,
+                event_count=0,
+                recipient_count=0,
+            )
+            return
+
+        if result.status == "dry_run":
+            outcome = "success"
+            members_notified = result.recipient_count
+            log_event(
+                "job_completed",
+                "reminder_runner",
+                status="dry_run",
+                duration_ms=elapsed_ms(started_at),
+                job="daily_reminder",
+                target_date=target_date,
+                event_count=result.event_count,
+                recipient_count=result.recipient_count,
+            )
+            return
+
+        delivery = result.delivery
+        if delivery is None:
+            raise RuntimeError("completed reminder result requires delivery data")
+        members_notified = delivery.sent_count
+        outcome = "failure" if delivery.failed_count else "success"
+        event_titles = ", ".join(result.event_titles)
+        summary = (
+            f"```\n"
+            f"[REMINDER] {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"Events on {target_date}: {event_titles}\n"
+            f"Discord: {delivery.discord_ok} sent, {delivery.discord_fail} failed\n"
+            f"Facebook: {delivery.fb_ok} sent, {delivery.fb_fail} failed\n"
+            f"LINE: {delivery.line_ok} sent, {delivery.line_fail} failed\n"
+            f"Total deliveries: {delivery.sent_count}\n"
+            f"```"
+        )
         log_event(
             "job_completed",
             "reminder_runner",
-            status="dry_run",
+            status=delivery.status,
             duration_ms=elapsed_ms(started_at),
             job="daily_reminder",
             target_date=target_date,
             event_count=result.event_count,
             recipient_count=result.recipient_count,
+            sent_count=delivery.sent_count,
+            failed_count=delivery.failed_count,
         )
-        return
-
-    delivery = result.delivery
-    if delivery is None:
-        raise RuntimeError("completed reminder result requires delivery data")
-    event_titles = ", ".join(result.event_titles)
-    summary = (
-        f"```\n"
-        f"[REMINDER] {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"Events on {target_date}: {event_titles}\n"
-        f"Discord: {delivery.discord_ok} sent, {delivery.discord_fail} failed\n"
-        f"Facebook: {delivery.fb_ok} sent, {delivery.fb_fail} failed\n"
-        f"LINE: {delivery.line_ok} sent, {delivery.line_fail} failed\n"
-        f"Total deliveries: {delivery.sent_count}\n"
-        f"```"
-    )
-    log_event(
-        "job_completed",
-        "reminder_runner",
-        status=delivery.status,
-        duration_ms=elapsed_ms(started_at),
-        job="daily_reminder",
-        target_date=target_date,
-        event_count=result.event_count,
-        recipient_count=result.recipient_count,
-        sent_count=delivery.sent_count,
-        failed_count=delivery.failed_count,
-    )
-    await _send_operational_log(summary)
+        await _send_operational_log(summary)
+    finally:
+        metrics_service.record_reminder_run(
+            outcome,
+            time.monotonic() - started_at,
+            events_found=events_found,
+            members_notified=members_notified,
+        )
 
 
 def run_once(target_date: str | None = None, dry: bool = False) -> None:

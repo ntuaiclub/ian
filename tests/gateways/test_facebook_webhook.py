@@ -141,6 +141,7 @@ def test_process_message_task_handles_no_response_reactions(
 ):
     typing_calls = []
     reactions = []
+    metric_records = []
 
     async def fake_typing(recipient_id, action, _correlation_id=None):
         typing_calls.append((recipient_id, action))
@@ -184,6 +185,11 @@ def test_process_message_task_handles_no_response_reactions(
             )
         ),
     )
+    monkeypatch.setattr(
+        facebook_webhook.metrics_service,
+        "record_gateway_message",
+        lambda platform, outcome: metric_records.append((platform, outcome)),
+    )
 
     asyncio.run(facebook_webhook.process_message_task("sender-1", "hello", mid=mid))
 
@@ -192,6 +198,7 @@ def test_process_message_task_handles_no_response_reactions(
         ("sender-1", "typing_off"),
     ]
     assert reactions == expected_reactions
+    assert metric_records == [("facebook", "no_response")]
     entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
     assert [entry["event"] for entry in entries] == ["agent_invoked", "no_response"]
     assert "sender-1" not in json.dumps(entries)

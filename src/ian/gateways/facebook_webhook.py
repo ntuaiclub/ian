@@ -37,6 +37,7 @@ application = get_application()
 agent_service = application.agent
 chat_history_service = application.chat_history
 member_service = application.members
+metrics_service = application.metrics
 
 
 def cleanup_processed_messages():
@@ -267,6 +268,7 @@ async def process_message_task(sender_id, user_message, mid=None):
         await send_typing_indicator(sender_id, "typing_off", correlation_id)
 
         if not agent_result.should_reply:
+            metrics_service.record_gateway_message("facebook", "no_response")
             log_event(
                 "no_response",
                 "facebook_webhook",
@@ -301,8 +303,10 @@ async def process_message_task(sender_id, user_message, mid=None):
             user_message=user_message,
             bot_response=agent_result.text,
         )
+        metrics_service.record_gateway_message("facebook", "success")
 
     except Exception as e:
+        metrics_service.record_gateway_message("facebook", "error")
         log_event(
             "request_failed",
             "facebook_webhook",
@@ -340,6 +344,7 @@ def handle_facebook_messages(data):
 
                 with PROCESSED_MESSAGES_LOCK:
                     if mid in PROCESSED_MESSAGES:
+                        metrics_service.record_gateway_message("facebook", "ignored")
                         log_event(
                             "request_ignored",
                             "facebook_webhook",

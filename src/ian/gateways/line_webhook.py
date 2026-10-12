@@ -43,6 +43,7 @@ application = get_application()
 agent_service = application.agent
 chat_history_service = application.chat_history
 member_service = application.members
+metrics_service = application.metrics
 
 
 def get_line_user_profile(user_id):
@@ -82,6 +83,7 @@ def handle_line_message(event):
         chat_id = event.source.user_id
 
     if source_type != "1on1" and chat_id not in LINE_ALLOWED_GROUPS:
+        metrics_service.record_gateway_message("line", "ignored")
         log_event(
             "request_ignored",
             "line_webhook",
@@ -96,6 +98,7 @@ def handle_line_message(event):
     actual_question = user_text.strip()
 
     if not actual_question:
+        metrics_service.record_gateway_message("line", "rejected")
         line_bot_api.reply_message(
             event.reply_token, TextSendMessage(text="請輸入您的問題！")
         )
@@ -184,6 +187,7 @@ async def process_line_message_task(
         )
 
         if not agent_result.should_reply:
+            metrics_service.record_gateway_message("line", "no_response")
             log_event(
                 "no_response",
                 "line_webhook",
@@ -197,6 +201,7 @@ async def process_line_message_task(
             return
 
         if agent_result.reason == "usage_limit":
+            metrics_service.record_gateway_message("line", "rate_limited")
             log_event(
                 "no_response",
                 "line_webhook",
@@ -264,6 +269,7 @@ async def process_line_message_task(
                         message_count=len(line_messages),
                     )
                 except Exception as push_error:
+                    metrics_service.record_gateway_message("line", "error")
                     log_event(
                         "external_send_failure",
                         "line_webhook",
@@ -287,8 +293,10 @@ async def process_line_message_task(
             user_message=user_message,
             bot_response=agent_result.text,
         )
+        metrics_service.record_gateway_message("line", "success")
 
     except Exception as e:
+        metrics_service.record_gateway_message("line", "error")
         log_event(
             "request_failed",
             "line_webhook",

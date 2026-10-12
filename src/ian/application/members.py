@@ -31,6 +31,7 @@ from ian.domain.members import (
     normalize_personal_prompt,
     normalize_subscribe,
 )
+from ian.application.metrics import ApplicationMetrics, NO_OP_METRICS
 
 
 class MemberRepository(Protocol):
@@ -68,8 +69,13 @@ class ReminderRecipient:
 
 
 class MemberService:
-    def __init__(self, repository: MemberRepository):
+    def __init__(
+        self,
+        repository: MemberRepository,
+        metrics: ApplicationMetrics = NO_OP_METRICS,
+    ):
         self.repository = repository
+        self.metrics = metrics
 
     async def find_user_by_platform(
         self,
@@ -236,24 +242,36 @@ class MemberService:
         now: datetime | None = None,
     ) -> list[ReminderRecipient]:
         recipients: list[ReminderRecipient] = []
-        for user in await self.repository.list_users_with_memberships():
-            tier = user.effective_tier(now)
-            if tier == MemberTier.NON_MEMBER:
-                continue
-            subscribed_platform = user.subscribed_platform()
-            if subscribed_platform is None:
-                continue
-            account_id = getattr(user, subscribed_platform.account_field)
-            if not account_id:
-                raise MemberDataError(
-                    f"user {user.id} subscribes to an unbound platform"
+        try:
+            for user in await self.repository.list_users_with_memberships():
+                tier = user.effective_tier(now)
+                if tier == MemberTier.NON_MEMBER:
+                    continue
+
+                subscribed_platform = user.subscribed_platform()
+                if subscribed_platform is None:
+                    continue
+
+                account_id = getattr(user, subscribed_platform.account_field)
+                if not account_id:
+                    raise MemberDataError(
+                        f"user {user.id} subscribes to an unbound platform"
+                    )
+
+                recipients.append(
+                    ReminderRecipient(
+                        user_id=user.id,
+                        platform=subscribed_platform,
+                        account_id=account_id,
+                        tier=tier,
+                    )
                 )
-            recipients.append(
-                ReminderRecipient(
-                    user_id=user.id,
-                    platform=subscribed_platform,
-                    account_id=account_id,
-                    tier=tier,
-                )
-            )
+        except Exception:
+            self.metrics.record_member_operation("load", "failure")
+            raise
+        self.metrics.record_member_operation(
+            "load",
+            "success",
+            loaded_count=len(recipients),
+        )
         return recipients

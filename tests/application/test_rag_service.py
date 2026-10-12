@@ -18,6 +18,8 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
+from unittest.mock import Mock
+
 import pytest
 
 from ian.application.rag import RagSearchResult, RagService
@@ -65,3 +67,20 @@ async def test_rag_service_delegates_lifecycle_and_search_to_port():
             methods="BM25+Semantic",
         )
     ]
+
+
+@pytest.mark.asyncio
+async def test_rag_service_records_initialization_search_latency_and_results(
+):
+    metrics = Mock()
+    service = RagService(FakeRagAdapter(), metrics)
+
+    assert service.initialize() is True
+    await service.search("社課時間", top_k=3)
+
+    metrics.record_rag_initialization.assert_called_once_with("success")
+    metrics.record_rag_search.assert_called_once()
+    outcome, duration = metrics.record_rag_search.call_args.args
+    assert outcome == "success"
+    assert duration >= 0
+    assert metrics.record_rag_search.call_args.kwargs == {"result_count": 1}

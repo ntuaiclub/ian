@@ -19,8 +19,10 @@
 #
 
 from dataclasses import dataclass
+import time
 from typing import Protocol
 
+from ian.application.metrics import ApplicationMetrics, NO_OP_METRICS
 from ian.domain.members import User
 from ian.domain.urls import parse_no_response
 
@@ -55,19 +57,41 @@ class AgentPort(Protocol):
 
 
 class AgentService:
-    def __init__(self, adapter: AgentPort):
+    def __init__(
+        self,
+        adapter: AgentPort,
+        metrics: ApplicationMetrics = NO_OP_METRICS,
+    ):
         self.adapter = adapter
+        self.metrics = metrics
 
     async def handle(self, request: AgentRequest) -> AgentResult:
-        response = await self.adapter.generate(request)
-        is_no_response, reaction_emoji = parse_no_response(response)
-        reason = "usage_limit" if "已達今日使用上限" in response else None
-        return AgentResult(
-            text=response,
-            should_reply=not is_no_response,
-            reaction_emoji=reaction_emoji,
-            reason=reason,
-        )
+        started_at = time.monotonic()
+        outcome = "error"
+
+        try:
+            response = await self.adapter.generate(request)
+            is_no_response, reaction_emoji = parse_no_response(response)
+            reason = "usage_limit" if "已達今日使用上限" in response else None
+
+            if reason is not None:
+                outcome = "rate_limited"
+            elif is_no_response:
+                outcome = "no_response"
+            else:
+                outcome = "success"
+
+            return AgentResult(
+                text=response,
+                should_reply=not is_no_response,
+                reaction_emoji=reaction_emoji,
+                reason=reason,
+            )
+        finally:
+            self.metrics.record_agent_call(
+                outcome,
+                time.monotonic() - started_at,
+            )
 
     async def clear(self, session_id: str) -> None:
         await self.adapter.clear(session_id)

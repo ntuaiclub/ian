@@ -19,6 +19,7 @@
 #
 
 import asyncio
+from unittest.mock import Mock
 
 import pytest
 
@@ -58,16 +59,23 @@ class StubRag:
 
 
 def test_payload_mcp_probe_reports_member_and_course_capabilities():
+    metrics = Mock()
     checks = _check(
         PayloadMcpReadinessProbe(
             StubCaller(
                 {"findUsers", "findMemberships", "updateUsers", "findEvents"}
-            )
+            ),
+            metrics=metrics,
         )
     )
 
     assert [check.name for check in checks] == ["member_data", "course_data"]
     assert all(check.ready for check in checks)
+    assert metrics.record_dependency_check.call_count == 1
+    assert metrics.record_dependency_check.call_args.args[:2] == (
+        "payload_mcp",
+        "ready",
+    )
 
 
 def test_payload_mcp_probe_reports_missing_tools_without_tool_names():

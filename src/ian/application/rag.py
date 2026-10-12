@@ -19,7 +19,10 @@
 #
 
 from dataclasses import dataclass
+import time
 from typing import Protocol
+
+from ian.application.metrics import ApplicationMetrics, NO_OP_METRICS
 
 
 @dataclass(frozen=True)
@@ -50,14 +53,42 @@ class RagSearchPort(Protocol):
 class RagService:
     """Application-facing entry point for knowledge-base retrieval."""
 
-    def __init__(self, adapter: RagSearchPort):
+    def __init__(
+        self,
+        adapter: RagSearchPort,
+        metrics: ApplicationMetrics = NO_OP_METRICS,
+    ):
         self.adapter = adapter
+        self.metrics = metrics
 
     def initialize(self) -> bool:
-        return self.adapter.initialize()
+        try:
+            initialized = self.adapter.initialize()
+        except Exception:
+            self.metrics.record_rag_initialization("failure")
+            raise
+        self.metrics.record_rag_initialization(
+            "success" if initialized else "failure"
+        )
+        return initialized
 
     def is_initialized(self) -> bool:
         return self.adapter.is_initialized()
 
     async def search(self, query: str, top_k: int = 5) -> list[RagSearchResult]:
-        return await self.adapter.search(query, top_k)
+        started_at = time.monotonic()
+        try:
+            results = await self.adapter.search(query, top_k)
+        except Exception:
+            self.metrics.record_rag_search(
+                "error",
+                time.monotonic() - started_at,
+                result_count=0,
+            )
+            raise
+        self.metrics.record_rag_search(
+            "success",
+            time.monotonic() - started_at,
+            result_count=len(results),
+        )
+        return results

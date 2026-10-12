@@ -29,6 +29,16 @@ from ian import cli
 runner = CliRunner()
 
 
+def _capture_metrics_configuration(monkeypatch):
+    components = []
+    monkeypatch.setattr(
+        cli,
+        "_configure_service_metrics",
+        lambda component: components.append(component),
+    )
+    return components
+
+
 def test_cli_lists_service_commands():
     result = runner.invoke(cli.app, ["--help"])
 
@@ -40,8 +50,34 @@ def test_cli_lists_service_commands():
     assert "serve" in result.output
 
 
+def test_configure_service_metrics_builds_component_resource_name(monkeypatch):
+    calls = []
+    monkeypatch.setattr("ian.config.OTEL_SERVICE_NAME", "ian-test")
+    monkeypatch.setattr("ian.config.OTEL_METRICS_EXPORTER", "none")
+    monkeypatch.setattr("ian.config.OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317")
+    monkeypatch.setattr("ian.config.OTEL_METRIC_EXPORT_INTERVAL", 1234)
+    monkeypatch.setattr(
+        "ian.infrastructure.metrics.configure_metrics",
+        lambda *args, **kwargs: calls.append((args, kwargs)),
+    )
+
+    cli._configure_service_metrics("mcp")
+
+    assert calls == [
+        (
+            ("ian-test-mcp",),
+            {
+                "exporter": "none",
+                "endpoint": "http://collector:4317",
+                "export_interval_millis": 1234,
+            },
+        )
+    ]
+
+
 def test_mcp_command_delegates_to_app(monkeypatch):
     calls = []
+    metrics_components = _capture_metrics_configuration(monkeypatch)
 
     def fake_main(host="0.0.0.0", port=5191):
         calls.append({"host": host, "port": port})
@@ -65,10 +101,12 @@ def test_mcp_command_delegates_to_app(monkeypatch):
 
     assert result.exit_code == 0
     assert calls == [{"host": "127.0.0.1", "port": 6000}]
+    assert metrics_components == ["mcp"]
 
 
 def test_reminder_command_delegates_to_app(monkeypatch):
     calls = []
+    metrics_components = _capture_metrics_configuration(monkeypatch)
 
     def fake_main(target_date=None, dry=False, daemon=False):
         calls.append({"target_date": target_date, "dry": dry, "daemon": daemon})
@@ -86,10 +124,12 @@ def test_reminder_command_delegates_to_app(monkeypatch):
 
     assert result.exit_code == 0
     assert calls == [{"target_date": "2026/03/07", "dry": True, "daemon": False}]
+    assert metrics_components == ["reminder"]
 
 
 def test_reminder_daemon_command_delegates_to_daemon_loop(monkeypatch):
     calls = []
+    metrics_components = _capture_metrics_configuration(monkeypatch)
     monkeypatch.setitem(
         sys.modules,
         "ian.entrypoints.reminder",
@@ -103,6 +143,7 @@ def test_reminder_daemon_command_delegates_to_daemon_loop(monkeypatch):
 
     assert result.exit_code == 0
     assert calls == ["daemon"]
+    assert metrics_components == ["reminder"]
 
 
 def test_serve_command_delegates_to_app(monkeypatch):
@@ -126,6 +167,7 @@ def test_serve_command_delegates_to_app(monkeypatch):
 
 def test_webhook_command_accepts_valid_platform(monkeypatch):
     calls = []
+    metrics_components = _capture_metrics_configuration(monkeypatch)
 
     def fake_main(platform="all"):
         calls.append({"platform": platform})
@@ -140,6 +182,7 @@ def test_webhook_command_accepts_valid_platform(monkeypatch):
 
     assert result.exit_code == 0
     assert calls == [{"platform": "line"}]
+    assert metrics_components == ["webhook"]
 
 
 def test_webhook_command_rejects_unknown_platform(monkeypatch):
@@ -150,6 +193,7 @@ def test_webhook_command_rejects_unknown_platform(monkeypatch):
 
 def test_discord_command_delegates_to_bot_runner(monkeypatch):
     calls = []
+    metrics_components = _capture_metrics_configuration(monkeypatch)
     monkeypatch.setitem(
         sys.modules,
         "ian.gateways.discord_bot",
@@ -160,3 +204,4 @@ def test_discord_command_delegates_to_bot_runner(monkeypatch):
 
     assert result.exit_code == 0
     assert calls == ["discord"]
+    assert metrics_components == ["discord"]

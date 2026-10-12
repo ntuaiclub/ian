@@ -18,6 +18,8 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
+from unittest.mock import Mock
+
 import pytest
 
 from ian.application.agent import AgentRequest, AgentService
@@ -97,3 +99,27 @@ async def test_agent_service_delegates_clear_and_startup():
 
     assert adapter.startup_calls == 1
     assert adapter.cleared == ["session-1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response", "outcome"),
+    [
+        ("正常回覆", "success"),
+        ("[NO_RESPONSE]", "no_response"),
+        ("😌 已達今日使用上限，明天再來。", "rate_limited"),
+    ],
+)
+async def test_agent_service_records_bounded_outcome_and_latency(
+    response,
+    outcome,
+):
+    metrics = Mock()
+    service = AgentService(AgentAdapterStub(response), metrics)
+
+    await service.handle(request())
+
+    metrics.record_agent_call.assert_called_once()
+    recorded_outcome, duration = metrics.record_agent_call.call_args.args
+    assert recorded_outcome == outcome
+    assert duration >= 0

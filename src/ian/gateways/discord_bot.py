@@ -33,6 +33,7 @@ application = get_application()
 agent_service = application.agent
 chat_history_service = application.chat_history
 member_service = application.members
+metrics_service = application.metrics
 
 
 def _interaction_correlation_id(interaction: discord.Interaction) -> str:
@@ -90,6 +91,7 @@ class FAQView(discord.ui.View):
                 )
             )
             if not agent_result.should_reply:
+                metrics_service.record_gateway_message("discord", "no_response")
                 log_event(
                     "no_response",
                     "discord_bot",
@@ -104,6 +106,7 @@ class FAQView(discord.ui.View):
                     await interaction.followup.send(agent_result.reaction_emoji)
                 return
             await interaction.followup.send(agent_result.text)
+            metrics_service.record_gateway_message("discord", "success")
             log_event(
                 "reply_sent",
                 "discord_bot",
@@ -115,6 +118,7 @@ class FAQView(discord.ui.View):
             )
 
         except Exception as e:
+            metrics_service.record_gateway_message("discord", "error")
             await interaction.followup.send("⚠️ Error.")
             log_event(
                 "request_failed",
@@ -232,6 +236,7 @@ async def ask(interaction: discord.Interaction, prompt: str):
             )
         )
         if not agent_result.should_reply:
+            metrics_service.record_gateway_message("discord", "no_response")
             log_event(
                 "no_response",
                 "discord_bot",
@@ -246,6 +251,7 @@ async def ask(interaction: discord.Interaction, prompt: str):
                 await interaction.followup.send(agent_result.reaction_emoji)
             return
         await interaction.followup.send(agent_result.text)
+        metrics_service.record_gateway_message("discord", "success")
         chat_history_service.record(
             platform=Platform.DISCORD,
             sender_id=str(user.id),
@@ -264,6 +270,7 @@ async def ask(interaction: discord.Interaction, prompt: str):
         )
 
     except Exception as e:
+        metrics_service.record_gateway_message("discord", "error")
         await interaction.followup.send("⚠️ Error.")
         log_event(
             "request_failed",

@@ -18,6 +18,11 @@
 # along with Ian. If not, see <https://www.gnu.org/licenses/>.
 #
 
+from contextvars import ContextVar
+from collections.abc import Awaitable, Callable
+from functools import wraps
+import time
+from typing import Literal, ParamSpec, TypeVar
 import warnings
 
 from mcp.server.fastmcp import FastMCP
@@ -49,6 +54,45 @@ member_notification_service = application.member_notifications
 operational_notifier = application.operational_notifications
 rag_service = application.rag
 health_service = application.health
+metrics_service = application.metrics
+McpToolOutcome = Literal["success", "failure", "error", "rejected", "not_ready"]
+_ToolParams = ParamSpec("_ToolParams")
+_ToolResult = TypeVar("_ToolResult")
+_mcp_tool_outcome: ContextVar[McpToolOutcome] = ContextVar("mcp_tool_outcome")
+
+
+def _instrument_mcp_tool(
+    name: str,
+) -> Callable[
+    [Callable[_ToolParams, Awaitable[_ToolResult]]],
+    Callable[_ToolParams, Awaitable[_ToolResult]],
+]:
+    def decorator(
+        function: Callable[_ToolParams, Awaitable[_ToolResult]],
+    ) -> Callable[_ToolParams, Awaitable[_ToolResult]]:
+        @wraps(function)
+        async def wrapper(
+            *args: _ToolParams.args,
+            **kwargs: _ToolParams.kwargs,
+        ) -> _ToolResult:
+            started_at = time.monotonic()
+            token = _mcp_tool_outcome.set("success")
+            try:
+                return await function(*args, **kwargs)
+            except Exception:
+                _mcp_tool_outcome.set("error")
+                raise
+            finally:
+                metrics_service.record_mcp_tool(
+                    name,
+                    _mcp_tool_outcome.get(),
+                    time.monotonic() - started_at,
+                )
+                _mcp_tool_outcome.reset(token)
+
+        return wrapper
+
+    return decorator
 
 
 def initialize_dependencies() -> None:
@@ -94,6 +138,7 @@ def _log_mcp_tool_failure(
     platform: str | None = None,
     account_id: str | None = None,
 ) -> None:
+    _mcp_tool_outcome.set("failure")
     log_event(
         "operation_failed",
         "mcp_server",
@@ -112,6 +157,7 @@ def _log_mcp_tool_failure(
 
 
 @mcp.tool(name="event_retriever")
+@_instrument_mcp_tool("event_retriever")
 async def event_retriever(
     platform: str = "",
     account_id: str = "",
@@ -138,6 +184,7 @@ async def event_retriever(
 
 
 @mcp.tool(name="qa_retreviler")
+@_instrument_mcp_tool("qa_retreviler")
 async def search_qa_chunks_by_semantics(query: str, top_k: int = 5) -> str:
     """
     根據使用者的問題意圖，檢索與社團行政事務（如社費、參加資格、活動報名等）相關的 Q&A 條目，才呼叫此工具。
@@ -147,6 +194,7 @@ async def search_qa_chunks_by_semantics(query: str, top_k: int = 5) -> str:
     """
     try:
         if not rag_service.is_initialized():
+            _mcp_tool_outcome.set("not_ready")
             return "錯誤：RAG 系統未初始化，請檢查資料檔案是否存在"
 
         results = await rag_service.search(query, top_k)
@@ -182,10 +230,12 @@ async def search_qa_chunks_by_semantics(query: str, top_k: int = 5) -> str:
         return "\n\n".join(formatted_results)
 
     except Exception as e:
+        _mcp_tool_outcome.set("failure")
         return f"搜尋過程發生錯誤: {str(e)}"
 
 
 @mcp.tool(name="notify_staff")
+@_instrument_mcp_tool("notify_staff")
 async def notify_staff(
     message: str,
     user_name: str = "",
@@ -237,6 +287,7 @@ async def notify_staff(
         if success:
             return "✅ 已成功通知幹部，他們會盡快處理您的需求。"
         else:
+            _mcp_tool_outcome.set("failure")
             return "⚠️ 通知發送失敗，請稍後再試或透過其他管道聯繫幹部。"
 
     except Exception as e:
@@ -245,6 +296,7 @@ async def notify_staff(
 
 
 @mcp.tool(name="bind_email")
+@_instrument_mcp_tool("bind_email")
 async def bind_email(email: str, platform: str, account_id: str) -> str:
     """
     透過 Email 綁定社員身分。使用者提供 Email 後，系統會比對社員資料庫，
@@ -262,9 +314,12 @@ async def bind_email(email: str, platform: str, account_id: str) -> str:
     """
     try:
         if not email or "@" not in email:
+            _mcp_tool_outcome.set("rejected")
             return "請提供有效的 Email 地址（例如：yourname@gmail.com）"
 
         result = await member_service.bind_user_platform(email, platform, account_id)
+        if not result.success:
+            _mcp_tool_outcome.set("rejected")
         return result.message
     except Exception as e:
         _log_mcp_tool_failure(
@@ -277,6 +332,7 @@ async def bind_email(email: str, platform: str, account_id: str) -> str:
 
 
 @mcp.tool(name="update_subscribe")
+@_instrument_mcp_tool("update_subscribe")
 async def update_subscribe(
     platform: str,
     account_id: str,
@@ -300,6 +356,8 @@ async def update_subscribe(
         result = await member_service.update_user_subscription(
             platform, account_id, subscribe
         )
+        if not result.success:
+            _mcp_tool_outcome.set("rejected")
         return result.message
     except Exception as e:
         _log_mcp_tool_failure(
@@ -312,6 +370,7 @@ async def update_subscribe(
 
 
 @mcp.tool(name="update_personal_prompt")
+@_instrument_mcp_tool("update_personal_prompt")
 async def update_personal_prompt(
     platform: str, account_id: str, personal_prompt: str
 ) -> str:
@@ -333,6 +392,8 @@ async def update_personal_prompt(
         result = await member_service.update_personal_prompt(
             platform, account_id, personal_prompt
         )
+        if not result.success:
+            _mcp_tool_outcome.set("rejected")
         return result.message
     except Exception as e:
         _log_mcp_tool_failure(
@@ -345,6 +406,7 @@ async def update_personal_prompt(
 
 
 @mcp.tool(name="notify_members")
+@_instrument_mcp_tool("notify_members")
 async def notify_members(
     platform: str,
     account_id: str,
@@ -383,6 +445,8 @@ async def notify_members(
                 note,
             )
             delivery = result.delivery
+            if delivery.failed_count:
+                _mcp_tool_outcome.set("failure")
             return (
                 f"通知已發送完成！\n\n"
                 f"活動: {result.event.title} (ID: {result.event.id})\n"
@@ -405,6 +469,8 @@ async def notify_members(
                 account_id,
                 custom_message,
             )
+            if delivery.failed_count:
+                _mcp_tool_outcome.set("failure")
             await operational_notifier.send_channel(
                 DISCORD_LOG_CHANNEL_ID,
                 f"```\n[STAFF NOTIFY] Custom message\n"
@@ -436,8 +502,10 @@ async def notify_members(
             limit=3,
         )
     except StaffPermissionError:
+        _mcp_tool_outcome.set("rejected")
         return "此功能僅限已驗證的幹部使用。如果您是幹部但尚未綁定帳號，請先透過 Email 綁定身分。"
     except EventNotFoundError:
+        _mcp_tool_outcome.set("rejected")
         return f"找不到 ID 為 {event_id} 的活動。"
     except Exception as error:
         _log_mcp_tool_failure(

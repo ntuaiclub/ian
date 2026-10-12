@@ -31,12 +31,30 @@ class WebhookPlatform(str, Enum):
     line = "line"
 
 
+def _configure_service_metrics(component: str) -> None:
+    from ian.config import (
+        OTEL_EXPORTER_OTLP_ENDPOINT,
+        OTEL_METRIC_EXPORT_INTERVAL,
+        OTEL_METRICS_EXPORTER,
+        OTEL_SERVICE_NAME,
+    )
+    from ian.infrastructure.metrics import configure_metrics
+
+    configure_metrics(
+        f"{OTEL_SERVICE_NAME}-{component}",
+        exporter=OTEL_METRICS_EXPORTER,
+        endpoint=OTEL_EXPORTER_OTLP_ENDPOINT,
+        export_interval_millis=OTEL_METRIC_EXPORT_INTERVAL,
+    )
+
+
 @app.command()
 def mcp(
     host: str = typer.Option("0.0.0.0", "--host", help="HTTP server host."),
     port: int = typer.Option(5191, "--port", help="HTTP server port."),
 ) -> None:
     """Run the MCP server."""
+    _configure_service_metrics("mcp")
     from ian.gateways.mcp_server import run_mcp_server
 
     run_mcp_server(host=host, port=port)
@@ -51,6 +69,7 @@ def webhook(
     ),
 ) -> None:
     """Run the Facebook/LINE webhook server."""
+    _configure_service_metrics("webhook")
     from ian.gateways.webhook_server import run_webhook_server
 
     run_webhook_server(platform=platform.value)
@@ -63,6 +82,7 @@ def reminder(
     date: str | None = typer.Option(None, "--date", help="Check specific date (YYYY/MM/DD)."),
 ) -> None:
     """Run the daily event reminder."""
+    _configure_service_metrics("reminder")
     from ian.entrypoints.reminder import daemon_loop, run_once
 
     if daemon:
@@ -74,6 +94,7 @@ def reminder(
 @app.command()
 def discord() -> None:
     """Run the Discord bot."""
+    _configure_service_metrics("discord")
     from ian.gateways.discord_bot import run_discord_bot
 
     run_discord_bot()

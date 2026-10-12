@@ -23,6 +23,7 @@ from datetime import date
 from typing import Literal
 
 from ian.application.events import EventService
+from ian.application.metrics import ApplicationMetrics, NO_OP_METRICS
 from ian.application.members import MemberService
 from ian.application.notifications import DeliveryReport, NotificationSender
 
@@ -52,10 +53,12 @@ class DailyReminderService:
         events: EventService,
         members: MemberService,
         sender: NotificationSender,
+        metrics: ApplicationMetrics = NO_OP_METRICS,
     ):
         self.events = events
         self.members = members
         self.sender = sender
+        self.metrics = metrics
 
     async def run(self, target_date: date, *, dry: bool = False) -> ReminderRunResult:
         try:
@@ -97,6 +100,11 @@ class DailyReminderService:
             except Exception:
                 success = False
             delivery.record(recipient, success)
+            platform = "facebook" if recipient.platform.value == "fb" else recipient.platform.value
+            self.metrics.record_reminder_notification(
+                platform,
+                "success" if success else "failure",
+            )
 
         return ReminderRunResult(
             "completed",

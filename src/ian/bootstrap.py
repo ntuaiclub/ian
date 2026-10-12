@@ -26,6 +26,7 @@ from ian.application.events import EventService
 from ian.application.health import HealthService
 from ian.application.member_notifications import MemberNotificationService
 from ian.application.members import MemberService
+from ian.application.metrics import ApplicationMetrics
 from ian.application.notifications import NotificationSender, OperationalNotifier
 from ian.application.rag import RagSearchPort, RagService
 from ian.application.reminders import DailyReminderService
@@ -53,6 +54,7 @@ from ian.infrastructure.health import (
     RagReadinessProbe,
     build_platform_configuration,
 )
+from ian.infrastructure.metrics import build_application_metrics
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,7 @@ class ApplicationServices:
     events: EventService
     health: HealthService
     members: MemberService
+    metrics: ApplicationMetrics
     reminders: DailyReminderService
     member_notifications: MemberNotificationService
     operational_notifications: OperationalNotifier
@@ -78,6 +81,7 @@ def build_application(
     agent_adapter: AgentPort | None = None,
     rag_adapter: RagSearchPort | None = None,
     chat_history_writer: ChatHistoryWriter | None = None,
+    metrics: ApplicationMetrics | None = None,
 ) -> ApplicationServices:
     """Compose application services without performing network I/O."""
     discord: DiscordHttpClient | None = None
@@ -123,37 +127,51 @@ def build_application(
                 log_channel_id=DISCORD_LOG_CHANNEL_ID,
             )
 
-    events = EventService(PayloadMcpEventRepository(caller))
-    members = MemberService(PayloadMcpMemberRepository(caller))
+    if metrics is None:
+        metrics = build_application_metrics()
     if agent_adapter is None:
         assert discord is not None
         agent_adapter = LangGraphAgentAdapter(discord, agent_log_channel_id)
     if rag_adapter is None:
         rag_adapter = HybridRagAdapter()
-    rag = RagService(rag_adapter)
+
+    members = MemberService(PayloadMcpMemberRepository(caller), metrics)
+    events = EventService(PayloadMcpEventRepository(caller))
+    agent = AgentService(agent_adapter, metrics)
+    rag = RagService(rag_adapter, metrics)
     health = HealthService(
         (
-            PayloadMcpReadinessProbe(caller),
-            RagReadinessProbe(rag),
-            PlatformReadinessProbe(build_platform_configuration()),
+            PayloadMcpReadinessProbe(caller, metrics=metrics),
+            RagReadinessProbe(rag, metrics),
+            PlatformReadinessProbe(build_platform_configuration(), metrics),
         )
     )
+    reminder = DailyReminderService(
+        events,
+        members,
+        notification_sender,
+        metrics,
+    )
+    member_notifications = MemberNotificationService(
+        events,
+        members,
+        notification_sender,
+    )
+
     if chat_history_writer is None:
         from ian.config import CHAT_HISTORY_FILE
 
         chat_history_writer = JsonlChatHistoryWriter(CHAT_HISTORY_FILE)
+
     return ApplicationServices(
-        agent=AgentService(agent_adapter),
+        agent=agent,
         chat_history=ChatHistoryService(chat_history_writer),
         events=events,
         health=health,
         members=members,
-        reminders=DailyReminderService(events, members, notification_sender),
-        member_notifications=MemberNotificationService(
-            events,
-            members,
-            notification_sender,
-        ),
+        metrics=metrics,
+        reminders=reminder,
+        member_notifications=member_notifications,
         operational_notifications=operational_notifier,
         rag=rag,
     )

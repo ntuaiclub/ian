@@ -55,6 +55,7 @@ def test_ask_records_successful_reply_without_changing_delivery(
 ):
     sent_messages = []
     history_calls = []
+    metric_records = []
 
     async def find_member(*_args):
         return None
@@ -81,6 +82,11 @@ def test_ask_records_successful_reply_without_changing_delivery(
         "chat_history_service",
         SimpleNamespace(record=record_history),
     )
+    monkeypatch.setattr(
+        discord_bot.metrics_service,
+        "record_gateway_message",
+        lambda platform, outcome: metric_records.append((platform, outcome)),
+    )
 
     asyncio.run(
         discord_bot.ask.callback(
@@ -90,6 +96,7 @@ def test_ask_records_successful_reply_without_changing_delivery(
     )
 
     assert sent_messages == ["private answer"]
+    assert metric_records == [("discord", "success")]
     assert history_calls == [
         {
             "platform": Platform.DISCORD,

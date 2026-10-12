@@ -19,6 +19,7 @@
 #
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import Mock
 
 import pytest
 
@@ -227,6 +228,7 @@ async def test_personal_prompt_is_trimmed_truncated_and_clearable():
 
 @pytest.mark.asyncio
 async def test_reminder_recipients_use_each_users_single_platform():
+    metrics = Mock()
     service = MemberService(
         FakeRepository(
             [
@@ -247,7 +249,8 @@ async def test_reminder_recipients_use_each_users_single_platform():
                 ),
                 make_user(user_id=13, tier=0, subscribe="discord"),
             ]
-        )
+        ),
+        metrics,
     )
 
     recipients = await service.list_reminder_recipients(NOW)
@@ -257,13 +260,22 @@ async def test_reminder_recipients_use_each_users_single_platform():
         (Platform.FB, "fb-11"),
         (Platform.LINE, "line-12"),
     ]
+    metrics.record_member_operation.assert_called_once_with(
+        "load",
+        "success",
+        loaded_count=3,
+    )
 
 
 @pytest.mark.asyncio
 async def test_reminder_recipients_fail_on_unbound_subscription():
+    metrics = Mock()
     service = MemberService(
-        FakeRepository([make_user(subscribe="line", line_acc_id=None)])
+        FakeRepository([make_user(subscribe="line", line_acc_id=None)]),
+        metrics,
     )
 
     with pytest.raises(MemberDataError):
         await service.list_reminder_recipients(NOW)
+
+    metrics.record_member_operation.assert_called_once_with("load", "failure")

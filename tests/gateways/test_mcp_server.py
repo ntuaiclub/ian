@@ -203,6 +203,7 @@ def test_member_tool_wrappers_return_messages_and_handle_exceptions(
     monkeypatch, tool_name, dependency_name, args, error_prefix
 ):
     events = []
+    metric_records = []
     monkeypatch.setattr(
         mcp_server,
         "log_event",
@@ -210,19 +211,26 @@ def test_member_tool_wrappers_return_messages_and_handle_exceptions(
             {"event": event, "component": component, **fields}
         ),
     )
+    monkeypatch.setattr(
+        mcp_server.metrics_service,
+        "record_mcp_tool",
+        lambda tool, outcome, duration: metric_records.append((tool, outcome)),
+    )
     tool = getattr(mcp_server, tool_name)
 
     async def success(*_args):
-        return SimpleNamespace(message="service message")
+        return SimpleNamespace(message="service message", success=True)
 
     monkeypatch.setattr(mcp_server.member_service, dependency_name, success)
     assert _run(tool(*args)) == "service message"
+    assert metric_records.pop() == (tool_name, "success")
 
     async def fail(*_args):
         raise RuntimeError("service unavailable")
 
     monkeypatch.setattr(mcp_server.member_service, dependency_name, fail)
     assert _run(tool(*args)) == f"{error_prefix}：service unavailable"
+    assert metric_records.pop() == (tool_name, "failure")
     assert events == [
         {
             "event": "operation_failed",
@@ -271,6 +279,7 @@ def _event(event_id=42, *, tier=0):
 def test_notify_members_sends_custom_notification(monkeypatch):
     delivery = DeliveryReport(total_members=2, discord_ok=1, discord_fail=1)
     logs = []
+    metric_records = []
 
     async def notify_custom(platform, account_id, message):
         assert (platform, account_id) == ("Discord", "account-1")
@@ -292,6 +301,11 @@ def test_notify_members_sends_custom_notification(monkeypatch):
         "send_channel",
         send_channel,
     )
+    monkeypatch.setattr(
+        mcp_server.metrics_service,
+        "record_mcp_tool",
+        lambda tool, outcome, duration: metric_records.append((tool, outcome)),
+    )
 
     result = _run(
         mcp_server.notify_members(
@@ -304,6 +318,7 @@ def test_notify_members_sends_custom_notification(monkeypatch):
     assert "通知對象: 2" in result
     assert "Discord: 1 成功, 1 失敗" in result
     assert len(logs) == 1
+    assert metric_records == [("notify_members", "failure")]
 
 
 def test_notify_members_reports_missing_event_without_sending(monkeypatch):

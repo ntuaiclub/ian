@@ -27,6 +27,7 @@ from types import SimpleNamespace
 
 import ian.bootstrap as bootstrap
 from ian.bootstrap import build_application
+from ian.application.metrics import ApplicationMetrics
 from ian.infrastructure.payload_mcp.event_repository import (
     PayloadMcpEventRepository,
 )
@@ -75,16 +76,29 @@ class FakeChatHistoryWriter:
         raise AssertionError("composition must not persist chat history")
 
 
+class FakeMetricSink:
+    def increment(self, name, value=1, attributes=None):
+        raise AssertionError("composition must not record metrics")
+
+    def observe(self, name, value, attributes=None):
+        raise AssertionError("composition must not record metrics")
+
+    def set_value(self, name, value, attributes=None):
+        raise AssertionError("composition must not record metrics")
+
+
 def test_build_application_composes_dependencies_without_io():
     operational = FakeOperationalNotifier()
     agent = FakeAgentAdapter()
     chat_history = FakeChatHistoryWriter()
+    metrics = ApplicationMetrics(FakeMetricSink())
     application = build_application(
         FakeCaller(),
         FakeSender(),
         operational,
         agent,
         chat_history_writer=chat_history,
+        metrics=metrics,
     )
 
     assert isinstance(application.events.repository, PayloadMcpEventRepository)
@@ -96,6 +110,7 @@ def test_build_application_composes_dependencies_without_io():
     assert application.operational_notifications is operational
     assert application.agent.adapter is agent
     assert application.chat_history.writer is chat_history
+    assert application.metrics is metrics
     assert isinstance(application.rag.adapter, HybridRagAdapter)
     assert [type(probe) for probe in application.health.probes] == [
         PayloadMcpReadinessProbe,

@@ -20,9 +20,11 @@
 
 import asyncio
 from dataclasses import dataclass
+import time
 from typing import Protocol
 
 from ian.application.health import ReadinessCheck
+from ian.application.metrics import ApplicationMetrics, NO_OP_METRICS
 from ian.application.rag import RagService
 from ian.infrastructure.payload_mcp.client import (
     McpToolCaller,
@@ -40,22 +42,40 @@ class ToolCapabilityCaller(Protocol):
 
 
 class PayloadMcpReadinessProbe:
-    def __init__(self, caller: McpToolCaller, timeout_seconds: float = 3.0):
+    def __init__(
+        self,
+        caller: McpToolCaller,
+        timeout_seconds: float = 3.0,
+        metrics: ApplicationMetrics = NO_OP_METRICS,
+    ):
         self.caller = caller
         self.timeout_seconds = timeout_seconds
+        self.metrics = metrics
 
     async def check(self) -> tuple[ReadinessCheck, ...]:
+        started_at = time.monotonic()
         try:
             async with asyncio.timeout(self.timeout_seconds):
                 tools = await self.caller.list_tools()
         except PayloadMcpConfigurationError:
+            self._record_check(started_at, "not_ready")
             return self._failed_checks("missing_configuration")
         except (PayloadMcpError, TimeoutError):
+            self._record_check(started_at, "not_ready")
             return self._failed_checks("unreachable")
 
+        ready = MEMBER_DATA_TOOLS.union(COURSE_DATA_TOOLS).issubset(tools)
+        self._record_check(started_at, "ready" if ready else "not_ready")
         return (
             self._tool_check("member_data", MEMBER_DATA_TOOLS, tools),
             self._tool_check("course_data", COURSE_DATA_TOOLS, tools),
+        )
+
+    def _record_check(self, started_at: float, outcome: str) -> None:
+        self.metrics.record_dependency_check(
+            "payload_mcp",
+            outcome,
+            time.monotonic() - started_at,
         )
 
     @staticmethod
@@ -81,11 +101,22 @@ class PayloadMcpReadinessProbe:
 
 
 class RagReadinessProbe:
-    def __init__(self, rag: RagService):
+    def __init__(
+        self,
+        rag: RagService,
+        metrics: ApplicationMetrics = NO_OP_METRICS,
+    ):
         self.rag = rag
+        self.metrics = metrics
 
     async def check(self) -> tuple[ReadinessCheck, ...]:
+        started_at = time.monotonic()
         initialized = self.rag.is_initialized()
+        self.metrics.record_dependency_check(
+            "rag",
+            "ready" if initialized else "not_ready",
+            time.monotonic() - started_at,
+        )
         return (
             ReadinessCheck(
                 "rag",
@@ -173,10 +204,16 @@ def build_platform_configuration() -> PlatformConfiguration:
 
 
 class PlatformReadinessProbe:
-    def __init__(self, configuration: PlatformConfiguration):
+    def __init__(
+        self,
+        configuration: PlatformConfiguration,
+        metrics: ApplicationMetrics = NO_OP_METRICS,
+    ):
         self.configuration = configuration
+        self.metrics = metrics
 
     async def check(self) -> tuple[ReadinessCheck, ...]:
+        started_at = time.monotonic()
         configuration = self.configuration
         configured = all(
             (
@@ -187,6 +224,17 @@ class PlatformReadinessProbe:
                 configuration.staff_notification_channel_configured,
             )
         )
+        duration = time.monotonic() - started_at
+        for dependency, ready in (
+            ("facebook", configuration.facebook_configured),
+            ("line", configuration.line_configured),
+            ("discord", configuration.discord_configured),
+        ):
+            self.metrics.record_dependency_check(
+                dependency,
+                "ready" if ready else "not_ready",
+                duration,
+            )
         return (
             ReadinessCheck(
                 "platforms",
