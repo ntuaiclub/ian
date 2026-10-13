@@ -30,6 +30,10 @@ from opentelemetry.sdk.metrics.export import (
     PeriodicExportingMetricReader,
 )
 from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.metrics.view import (
+    ExplicitBucketHistogramAggregation,
+    View,
+)
 
 from ian.application.metrics import ApplicationMetrics, MetricAttributes
 
@@ -70,6 +74,36 @@ INSTRUMENTS = {
 
 _meter_provider: MeterProvider | None = None
 _in_memory_reader: InMemoryMetricReader | None = None
+
+_DURATION_HISTOGRAMS = (
+    "ian.agent.call.duration",
+    "ian.mcp.tool.duration",
+    "ian.reminder.run.duration",
+    "ian.rag.search.duration",
+    "ian.dependency.check.duration",
+)
+_DURATION_BOUNDARIES = (
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1,
+    2.5,
+    5,
+    10,
+    30,
+    60,
+)
+_METRIC_VIEWS = tuple(
+    View(
+        instrument_name=name,
+        aggregation=ExplicitBucketHistogramAggregation(_DURATION_BOUNDARIES),
+    )
+    for name in _DURATION_HISTOGRAMS
+)
 
 
 class OpenTelemetryMetricSink:
@@ -175,7 +209,11 @@ def configure_metrics(
     else:
         raise ValueError(f"Unsupported OTEL_METRICS_EXPORTER: {exporter}")
 
-    provider = MeterProvider(resource=resource, metric_readers=readers)
+    provider = MeterProvider(
+        resource=resource,
+        metric_readers=readers,
+        views=_METRIC_VIEWS,
+    )
     metrics.set_meter_provider(provider)
     _meter_provider = provider
     return provider

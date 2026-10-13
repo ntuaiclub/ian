@@ -41,7 +41,7 @@
 ## 專案結構
 
 ```
-ntuai-watson-agent/
+ian/
 ├── src/
 │   └── ian/
 │       ├── domain/         # 無 I/O 的 models 與純規則
@@ -221,7 +221,7 @@ Docker image 以 MCP `/ready` 作為 container healthcheck。MCP port 不映射�
 
 ```bash
 docker compose ps
-docker compose exec ntuai-watson-agent \
+docker compose exec ntuai-ian-agent \
   curl --fail http://localhost:5191/ready
 ```
 
@@ -273,10 +273,9 @@ OTEL_METRIC_EXPORT_INTERVAL=60000
   exporter、不要求外部 backend。
 - `OTEL_METRICS_EXPORTER=otlp`：以 OTLP/gRPC 定期輸出；Collector 暫時無法連線時
   不影響核心 request/job 執行。
-
-Collector、Prometheus-compatible endpoint、Prometheus scrape 與 Grafana dashboard
-由後續 observability endpoint 工作提供；本階段不新增 `/metrics` endpoint，也不讓
-外部監控 stack 成為 Ian 的啟動必要條件。
+- Grafana dashboard：`http://localhost:3000`
+- Prometheus query：`http://localhost:9090`
+- Collector Prometheus exporter：`http://localhost:8889/metrics`
 
 **訊息處理特性：**
 
@@ -298,7 +297,7 @@ Collector、Prometheus-compatible endpoint、Prometheus scrape 與 Grafana dashb
 | Web Framework | Flask (async) |
 | Bot SDK | discord.py、LINE Bot SDK |
 | Transport | MCP streamable-http via Starlette + Uvicorn |
-| Observability | OpenTelemetry Metrics（in-memory / optional OTLP） |
+| Observability | OpenTelemetry Metrics、Prometheus、Grafana（optional） |
 | 社員資料 | ntuai.dev MCP（Users + Memberships） |
 | 活動資料 | ntuai.dev Payload MCP（Events） |
 | Infrastructure | Docker (NVIDIA CUDA 12.1)、Docker Compose、ngrok |

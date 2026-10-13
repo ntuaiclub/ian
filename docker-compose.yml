@@ -1,10 +1,8 @@
-version: '3.8'
-
 services:
-  ntuai-watson-agent:
+  ntuai-ian-agent:
     build: .
-    image: ntuai-watson-agent
-    container_name: ntuai-watson-agent
+    image: ntuai-ian-agent
+    container_name: ntuai-ian-agent
     restart: unless-stopped
     ports:
       - "5190:5190"
@@ -29,7 +27,7 @@ services:
       - NTUAI_MCP_TIMEOUT_SECONDS=${NTUAI_MCP_TIMEOUT_SECONDS:-20}
       - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-ian}
       - OTEL_METRICS_EXPORTER=${OTEL_METRICS_EXPORTER:-none}
-      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4317}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       - OTEL_METRIC_EXPORT_INTERVAL=${OTEL_METRIC_EXPORT_INTERVAL:-60000}
     deploy:
       resources:
@@ -46,10 +44,53 @@ services:
       - "4040:4040"
     environment:
       - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN}
-    command: http ntuai-watson-agent:5190
+    command: http ntuai-ian-agent:5190
     depends_on:
-      - ntuai-watson-agent
+      - ntuai-ian-agent
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.121.0
+    restart: unless-stopped
+    profiles: [observability]
+    command: ["--config=/etc/otelcol-contrib/config.yml"]
+    volumes:
+      - ./observability/otel-collector.yml:/etc/otelcol-contrib/config.yml:ro
+    ports:
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:8889:8889"
+
+  prometheus:
+    image: prom/prometheus:v3.2.1
+    restart: unless-stopped
+    profiles: [observability]
+    depends_on:
+      - otel-collector
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    restart: unless-stopped
+    profiles: [observability]
+    depends_on:
+      - prometheus
+    environment:
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
 
 volumes:
   huggingface-cache:
   faiss-cache:
+  prometheus-data:
+  grafana-data:

@@ -63,7 +63,7 @@ def test_health_check_reports_liveness_without_readiness_probe(monkeypatch):
     response = _run(mcp_server.health_check(None))
 
     assert response.status_code == 200
-    assert json.loads(response.body) == {"status": "ok"}
+    assert json.loads(bytes(response.body)) == {"status": "ok"}
 
 
 @pytest.mark.parametrize(
@@ -83,7 +83,7 @@ def test_readiness_check_uses_aggregate_status(monkeypatch, ready, status_code):
     response = _run(mcp_server.readiness_check(None))
 
     assert response.status_code == status_code
-    assert json.loads(response.body)["status"] == (
+    assert json.loads(bytes(response.body))["status"] == (
         "ready" if ready else "not_ready"
     )
 
@@ -100,10 +100,10 @@ def test_mcp_configures_liveness_and_readiness_routes():
 def test_mcp_asgi_app_serves_health_routes(monkeypatch):
     report = ReadinessReport((ReadinessCheck("rag", ready=False),))
 
-    async def readiness():
+    async def readiness_report():
         return report
 
-    monkeypatch.setattr(mcp_server.health_service, "readiness", readiness)
+    monkeypatch.setattr(mcp_server.health_service, "readiness", readiness_report)
     mcp_server.configure_health_routes()
     app = mcp_server.mcp.streamable_http_app()
 
@@ -115,12 +115,12 @@ def test_mcp_asgi_app_serves_health_routes(monkeypatch):
         ) as client:
             return await client.get("/health"), await client.get("/ready")
 
-    health, readiness = _run(request_routes())
+    health_response, readiness_response = _run(request_routes())
 
-    assert health.status_code == 200
-    assert health.json() == {"status": "ok"}
-    assert readiness.status_code == 503
-    assert readiness.json()["status"] == "not_ready"
+    assert health_response.status_code == 200
+    assert health_response.json() == {"status": "ok"}
+    assert readiness_response.status_code == 503
+    assert readiness_response.json()["status"] == "not_ready"
 
 
 def test_qa_retriever_reports_uninitialized_rag(monkeypatch):
