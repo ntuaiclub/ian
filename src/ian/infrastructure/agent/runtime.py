@@ -140,69 +140,73 @@ async def run_agentic_workflow():
             ) = await asyncio.to_thread(request_queue.get)
             if session_id is None:
                 break
+            if not fut.set_running_or_notify_cancel():
+                continue
+
             invocation_started_at = time.monotonic()
             correlation_id = hash_identifier(session_id)
-
-            # Log 使用者訊息
-            add_log(
-                "USER_MESSAGE",
-                user_name=hash_identifier(user_name),
-                user_role=str(user_role),
-                message=redact_user_content(question),
-                session_id=hash_identifier(session_id),
-                platform=platform,
-            )
-
-            # 動態產生時間資訊
-            tz_taipei = timezone(timedelta(hours=8))
-            dt_object = datetime.fromtimestamp(timestamp, tz=tz_taipei)
-            nowdatetime = dt_object.strftime("%Y-%m-%d %H:%M:%S")
-            nowday = dt_object.strftime("%A")
-
-            current_timestamp = time.time()  # Get current time for timeout logic
-
-            with sessions_lock:
-                clear_session_if_timeout(
-                    session_id, current_timestamp
-                )  # Check before processing
-
-                session, was_created = upsert_session(
-                    session_id,
-                    user_name,
-                    user_role,
-                    channel_id,
-                    current_timestamp,
-                )
-                if was_created:
-                    add_log(
-                        "SESSION",
-                        action="Created",
-                        user_name=hash_identifier(user_name),
-                        session_id=hash_identifier(session_id),
-                    )
-
-                # Initialize or re-initialize agent if needed
-                if session.get("agent") is None:
-                    memory = MemorySaver()
-                    agent = create_agent(
-                        model=llm,
-                        tools=tools,
-                        system_prompt=SYS_PROMPT,
-                        checkpointer=memory,
-                    )
-                    set_session_agent(session_id, agent, memory)
-                    log_event(
-                        "operation_completed",
-                        "agent_runtime",
-                        platform=platform,
-                        status="success",
-                        correlation_id=correlation_id,
-                        session_id=session_id,
-                        operation="create_session_agent",
-                    )
-
-            # Agent invocation (outside the lock for long-running I/O)
+            agent_invocation_started = False
             try:
+                # Log 使用者訊息
+                add_log(
+                    "USER_MESSAGE",
+                    user_name=hash_identifier(user_name),
+                    user_role=str(user_role),
+                    message=redact_user_content(question),
+                    session_id=hash_identifier(session_id),
+                    platform=platform,
+                )
+
+                # 動態產生時間資訊
+                tz_taipei = timezone(timedelta(hours=8))
+                dt_object = datetime.fromtimestamp(timestamp, tz=tz_taipei)
+                nowdatetime = dt_object.strftime("%Y-%m-%d %H:%M:%S")
+                nowday = dt_object.strftime("%A")
+
+                current_timestamp = time.time()  # Get current time for timeout logic
+
+                with sessions_lock:
+                    clear_session_if_timeout(
+                        session_id, current_timestamp
+                    )  # Check before processing
+
+                    session, was_created = upsert_session(
+                        session_id,
+                        user_name,
+                        user_role,
+                        channel_id,
+                        current_timestamp,
+                    )
+                    if was_created:
+                        add_log(
+                            "SESSION",
+                            action="Created",
+                            user_name=hash_identifier(user_name),
+                            session_id=hash_identifier(session_id),
+                        )
+
+                    # Initialize or re-initialize agent if needed
+                    if session.get("agent") is None:
+                        memory = MemorySaver()
+                        agent = create_agent(
+                            model=llm,
+                            tools=tools,
+                            system_prompt=SYS_PROMPT,
+                            checkpointer=memory,
+                        )
+                        set_session_agent(session_id, agent, memory)
+                        log_event(
+                            "operation_completed",
+                            "agent_runtime",
+                            platform=platform,
+                            status="success",
+                            correlation_id=correlation_id,
+                            session_id=session_id,
+                            operation="create_session_agent",
+                        )
+
+                # Agent invocation (outside the lock for long-running I/O)
+                agent_invocation_started = True
                 # Safely get agent_obj after ensuring session exists and agent is initialized
                 with sessions_lock:
                     agent_obj, channel_id = get_session_agent_and_channel(session_id)
@@ -394,8 +398,6 @@ async def run_agentic_workflow():
                             # 所有重試都失敗，拋出讓外層處理
                             raise
 
-                fut.set_result(parsed_agent_response)
-
                 log_event(
                     "agent_completed",
                     "agent_runtime",
@@ -413,6 +415,7 @@ async def run_agentic_workflow():
                     user_name=hash_identifier(user_name),
                     response=redact_user_content(parsed_agent_response),
                 )
+                fut.set_result(parsed_agent_response)
 
             except BaseException as error_msg:
                 if isinstance(error_msg, (KeyboardInterrupt, SystemExit)):
@@ -422,7 +425,7 @@ async def run_agentic_workflow():
                 add_log(
                     "ERROR",
                     error=type(root_cause).__name__,
-                    context="LLM invoke",
+                    context="Agent request",
                 )
                 log_event(
                     "agent_failed",
@@ -436,10 +439,10 @@ async def run_agentic_workflow():
                     account_id=account_id,
                     error=root_cause,
                 )
-                # 重置 session，避免殘留的 AIMessage（帶 tool_calls 但無 ToolMessage）
-                # 導致後續請求因 INVALID_CHAT_HISTORY 持續失敗
-                with sessions_lock:
-                    reset_session_agent(session_id, user_name)
+                if agent_invocation_started:
+                    # Clear damaged history only after agent invocation begins.
+                    with sessions_lock:
+                        reset_session_agent(session_id, user_name)
                 fut.set_result(
                     "⚠️ 發生錯誤，請稍後再試。\nError occurred, please try again later."
                 )
