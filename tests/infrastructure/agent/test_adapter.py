@@ -128,6 +128,33 @@ async def test_langgraph_adapter_delegates_clear_and_startup(monkeypatch):
     ]
 
 
+class _FakeWorkflowFuture:
+    def __init__(self, *, error=None):
+        self._error = error
+        self._callbacks = []
+        self._done = False
+
+    def add_done_callback(self, callback):
+        self._callbacks.append(callback)
+        if self._done:
+            callback(self)
+
+    def exception(self):
+        return self._error
+
+    def fail(self, error):
+        self._error = error
+        self._done = True
+        for callback in list(self._callbacks):
+            callback(self)
+
+    def complete(self):
+        self._error = None
+        self._done = True
+        for callback in list(self._callbacks):
+            callback(self)
+
+
 def test_dispatcher_starts_only_once(monkeypatch):
     calls = []
 
@@ -151,7 +178,9 @@ def test_dispatcher_starts_only_once(monkeypatch):
     monkeypatch.setattr(
         runtime.asyncio,
         "run_coroutine_threadsafe",
-        lambda coroutine, loop: calls.append(("scheduled", loop)) or coroutine.close(),
+        lambda coroutine, loop: calls.append(("scheduled", loop))
+        or coroutine.close()
+        or _FakeWorkflowFuture(),
     )
 
     first = runtime.start_dispatcher("User", {"timestamp": 1})
@@ -169,3 +198,73 @@ def test_dispatcher_starts_only_once(monkeypatch):
         )
         == 1
     )
+
+
+def test_dispatcher_reschedules_after_workflow_setup_failure(monkeypatch):
+    calls = []
+    futures = []
+
+    class FakeLoop:
+        def run_forever(self):
+            calls.append("run_forever")
+
+    class FakeThread:
+        def __init__(self, *, target, daemon):
+            self.target = target
+
+        def start(self):
+            calls.append("thread_start")
+
+    def schedule(coroutine, loop):
+        coroutine.close()
+        future = _FakeWorkflowFuture()
+        futures.append(future)
+        calls.append(("scheduled", loop))
+        return future
+
+    monkeypatch.setattr(runtime, "loop_agent", None)
+    monkeypatch.setattr(runtime, "dispatcher_started", False)
+    monkeypatch.setattr(runtime, "start_log_processor", lambda: None)
+    monkeypatch.setattr(runtime.asyncio, "new_event_loop", FakeLoop)
+    monkeypatch.setattr(runtime.threading, "Thread", FakeThread)
+    monkeypatch.setattr(runtime.asyncio, "run_coroutine_threadsafe", schedule)
+    monkeypatch.setattr(runtime, "log_event", lambda *args, **kwargs: None)
+
+    first_loop = runtime.start_dispatcher("User", {"timestamp": 1})
+    assert runtime.dispatcher_started is True
+    assert len(futures) == 1
+
+    futures[0].fail(ConnectionError("mcp down"))
+    assert runtime.dispatcher_started is False
+
+    second_loop = runtime.start_dispatcher("User", {"timestamp": 1})
+    assert second_loop is first_loop
+    assert runtime.dispatcher_started is True
+    assert len(futures) == 2
+    assert calls.count("thread_start") == 1
+
+
+@pytest.mark.asyncio
+async def test_run_agentic_workflow_closes_client_when_get_tools_fails(monkeypatch):
+    closed = []
+
+    class FakeClient:
+        async def get_tools(self):
+            raise ConnectionError("mcp unavailable")
+
+        async def aclose(self):
+            closed.append(True)
+
+    class FakeLLM:
+        def with_fallbacks(self, fallbacks):
+            return self
+
+    monkeypatch.setattr(runtime, "MultiServerMCPClient", lambda config: FakeClient())
+    monkeypatch.setattr(runtime, "ChatGoogleGenerativeAI", lambda **kwargs: FakeLLM())
+    monkeypatch.setattr(runtime, "GOOGLE_API_KEY", "test-key")
+    monkeypatch.setattr(runtime, "log_event", lambda *args, **kwargs: None)
+
+    with pytest.raises(ConnectionError, match="mcp unavailable"):
+        await runtime.run_agentic_workflow()
+
+    assert closed == [True]
