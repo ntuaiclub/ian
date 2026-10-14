@@ -129,3 +129,15 @@ def test_chat_with_agent_logs_usage_and_queue_outcomes(
     assert entry["status"] == expected_status
     assert len(queued) == int(usage_allowed)
     assert "private question" not in json.dumps(entry)
+
+
+def test_agent_runtime_counts_no_rejection_for_benign_placeholder_text():
+    from ian.infrastructure.agent.runtime import (
+        _validate_agent_response_urls_with_count,
+    )
+
+    text = f"{URL_PLACEHOLDER} 的意思是讀取失敗"
+    cleaned, rejected = _validate_agent_response_urls_with_count(text, [])
+
+    assert rejected == 0
+    assert cleaned == text

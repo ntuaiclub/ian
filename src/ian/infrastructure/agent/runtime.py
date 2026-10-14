@@ -33,7 +33,10 @@ from langgraph.checkpoint.memory import MemorySaver
 from ian.config import GOOGLE_API_KEY
 from ian.domain.injection import INJECTION_REJECTION_MSG, detect_prompt_injection
 from ian.domain.members import User
-from ian.domain.urls import URL_PLACEHOLDER, validate_urls_in_response
+from ian.domain.urls import (
+    validate_urls_in_response,
+    validate_urls_in_response_with_count,
+)
 from ian.infrastructure.agent.callbacks import (
     DiscordLogCallbackHandler,
     extract_text_from_output,
@@ -66,6 +69,14 @@ def _unwrap_exception(exc: BaseException) -> BaseException:
 
 def _validate_agent_response_urls(response: str, tool_results: list[str]) -> str:
     return validate_urls_in_response(response, tool_results, prompt_text=SYS_PROMPT)
+
+
+def _validate_agent_response_urls_with_count(
+    response: str, tool_results: list[str]
+) -> tuple[str, int]:
+    return validate_urls_in_response_with_count(
+        response, tool_results, prompt_text=SYS_PROMPT
+    )
 
 
 loop_agent = None
@@ -225,7 +236,6 @@ async def run_agentic_workflow():
 
                 MAX_URL_RETRIES = 2  # 最多嘗試次數（含首次）
                 MAX_INVOKE_RETRIES = 3  # ainvoke 失敗時最多重試次數（含首次）
-                FAKE_URL_PLACEHOLDER = URL_PLACEHOLDER
 
                 agent_msg = None
                 last_invoke_error = None
@@ -357,12 +367,15 @@ async def run_agentic_workflow():
                             for msg in messages:
                                 if hasattr(msg, "type") and msg.type == "tool":
                                     all_tool_texts.append(extract_text_from_output(msg))
-                            parsed_agent_response = _validate_agent_response_urls(
+                            (
+                                parsed_agent_response,
+                                rejected_url_count,
+                            ) = _validate_agent_response_urls_with_count(
                                 parsed_agent_response, all_tool_texts
                             )
 
-                            # 如果沒有捏造的 URL，跳出重試迴圈
-                            if FAKE_URL_PLACEHOLDER not in parsed_agent_response:
+                            # 只有在驗證器實際替換了捏造的 URL 時才重試
+                            if rejected_url_count == 0:
                                 break
 
                         # ainvoke 成功，跳出外層重試迴圈
