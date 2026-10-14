@@ -42,3 +42,47 @@ def test_validate_urls_replaces_unapproved_response_urls():
     assert "https://linktr.ee/ntuai" in cleaned
     assert "https://fake.example/path" not in cleaned
     assert "(連結讀取錯誤，請重新索取)" in cleaned
+
+
+def test_validate_urls_rejects_hostname_prefix_phishing():
+    """Regression for #133: a longer hostname that shares a string prefix with
+    an allowed host must not be treated as allowed."""
+    cleaned = validate_urls_in_response(
+        "https://trusted.example.evil/phish",
+        tool_results=["https://trusted.example"],
+    )
+    assert cleaned == "(連結讀取錯誤，請重新索取)"
+
+
+def test_validate_urls_rejects_userinfo_host_spoof():
+    """Regression for #133: userinfo before '@' must not count as the host."""
+    cleaned = validate_urls_in_response(
+        "https://trusted.example@evil.example/phish",
+        tool_results=["https://trusted.example"],
+    )
+    assert cleaned == "(連結讀取錯誤，請重新索取)"
+
+
+def test_validate_urls_allows_same_origin_subpath():
+    cleaned = validate_urls_in_response(
+        "詳見 https://cdn.example/docs/guide.html",
+        tool_results=["https://cdn.example/docs"],
+    )
+    assert "https://cdn.example/docs/guide.html" in cleaned
+    assert "(連結讀取錯誤，請重新索取)" not in cleaned
+
+
+def test_validate_urls_allows_parent_of_approved_path():
+    cleaned = validate_urls_in_response(
+        "首頁 https://cdn.example/docs",
+        tool_results=["https://cdn.example/docs/guide.html"],
+    )
+    assert "https://cdn.example/docs" in cleaned
+
+
+def test_validate_urls_rejects_different_port():
+    cleaned = validate_urls_in_response(
+        "https://trusted.example:8443/path",
+        tool_results=["https://trusted.example/path"],
+    )
+    assert cleaned == "(連結讀取錯誤，請重新索取)"
