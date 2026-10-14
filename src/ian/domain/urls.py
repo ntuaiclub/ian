@@ -22,7 +22,15 @@ import re
 
 
 URL_PLACEHOLDER = "(連結讀取錯誤，請重新索取)"
-URL_PATTERN = re.compile(r"https?://[^\s\)）\]」'>,，、。]+")
+URL_PATTERN = re.compile(r"https?://[^\s\)）\]」'>,，、。]+", re.IGNORECASE)
+
+
+def _normalize_scheme(url: str) -> str:
+    """Lowercase the URI scheme only; path and host stay unchanged."""
+    match = re.match(r"^(https?)://", url, flags=re.IGNORECASE)
+    if not match:
+        return url
+    return f"{match.group(1).lower()}://{url[match.end() :]}"
 
 
 def extract_urls(text: str) -> set[str]:
@@ -47,13 +55,16 @@ def validate_urls_in_response(
     for result in tool_results:
         allowed_urls.update(extract_urls(result))
 
-    for url in URL_PATTERN.findall(response):
-        url_norm = url.rstrip("/")
-        if not any(
-            url_norm.startswith(allowed.rstrip("/"))
-            or allowed.rstrip("/").startswith(url_norm)
-            for allowed in allowed_urls
-        ):
-            response = response.replace(url, URL_PLACEHOLDER)
+    allowed_norms = {_normalize_scheme(url).rstrip("/") for url in allowed_urls}
 
-    return response
+    def replace_unapproved(match: re.Match[str]) -> str:
+        url = match.group(0)
+        url_norm = _normalize_scheme(url).rstrip("/")
+        if not any(
+            url_norm.startswith(allowed) or allowed.startswith(url_norm)
+            for allowed in allowed_norms
+        ):
+            return URL_PLACEHOLDER
+        return url
+
+    return URL_PATTERN.sub(replace_unapproved, response)
