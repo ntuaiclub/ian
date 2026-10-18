@@ -13,6 +13,7 @@ Dockerfile
 .git/
 .gitignore
 *.md
+!README.md
 .DS_Store
 *.swp
 *.swo

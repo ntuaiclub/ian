@@ -59,8 +59,8 @@ ian/
 │   ├── entrypoints/        # process lifecycle pytest 覆蓋
 │   ├── agent/              # Agent runtime placeholder（目前 intentionally skipped）
 │   └── integration/        # MCP/LLM/平台整合測試 placeholder（目前 intentionally skipped）
-├── Dockerfile              # NVIDIA CUDA 12.1 + Python 3.11 映像
-├── docker-compose.yml      # 含 GPU 支援與 ngrok tunnel
+├── Dockerfile              # CPU-only Python 3.11 映像
+├── docker-compose.yml      # 含 ngrok tunnel 與 optional observability stack
 ├── Makefile                # 常用本機開發與 Docker 指令捷徑
 ├── .python-version         # uv 本機 Python 版本固定檔
 ├── .pre-commit-config.yaml # pre-commit 本機檢查設定

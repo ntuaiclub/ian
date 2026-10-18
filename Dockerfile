@@ -20,7 +20,7 @@
 
 # Dockerfile
 
-FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
+FROM python:3.11-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -36,13 +36,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 ENV UV_PROJECT_ENVIRONMENT=/app/.venv \
-    UV_PYTHON=3.11 \
     UV_LINK_MODE=copy \
     PATH="/app/.venv/bin:$PATH"
 
 COPY pyproject.toml uv.lock README.md .python-version ./
-RUN uv python install 3.11 && \
-    uv sync --locked --no-dev --no-install-project
+RUN uv sync --locked --no-dev --no-install-project
 
 RUN echo "--- Installed Packages List ---" && \
     uv pip list && \

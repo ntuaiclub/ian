@@ -24,8 +24,8 @@ dependencies = [
     "langchain-mcp-adapters",
     "pydantic",
     "sentence-transformers",
-    "faiss-gpu-cu12; sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "faiss-cpu; sys_platform == 'darwin'",
+    "torch",
+    "faiss-cpu",
     "python-dotenv",
     "jieba",
     "uvicorn",
@@ -55,6 +55,14 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

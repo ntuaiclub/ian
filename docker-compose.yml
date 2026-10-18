@@ -29,14 +29,6 @@ services:
       - OTEL_METRICS_EXPORTER=${OTEL_METRICS_EXPORTER:-none}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4317}
       - OTEL_METRIC_EXPORT_INTERVAL=${OTEL_METRIC_EXPORT_INTERVAL:-60000}
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-
   ngrok:
     image: ngrok/ngrok:latest
     restart: unless-stopped
