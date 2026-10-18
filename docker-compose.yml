@@ -1,15 +1,16 @@
 services:
   ntuai-ian-agent:
     build: .
-    image: ntuai-ian-agent
+    image: ${IAN_IMAGE:-ntuai-ian-agent}
     container_name: ntuai-ian-agent
     restart: unless-stopped
     ports:
-      - "5190:5190"
+      - "${IAN_WEBHOOK_BIND_ADDRESS:-0.0.0.0}:5190:5190"
     volumes:
       - huggingface-cache:/root/.cache/huggingface
       - faiss-cache:/app/cache
       - ./data:/app/data
+      - chat-history:/app/uploads
     environment:
       - HF_HOME=/root/.cache/huggingface
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
@@ -84,5 +85,6 @@ services:
 volumes:
   huggingface-cache:
   faiss-cache:
+  chat-history:
   prometheus-data:
   grafana-data:

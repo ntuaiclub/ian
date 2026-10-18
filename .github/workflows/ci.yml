@@ -12,9 +12,11 @@ on:
       - .pre-commit-config.yaml
       - Makefile
       - Dockerfile
+      - .dockerignore
       - docker-compose.yml
-      - start.sh
-      - .github/workflows/ci.yml
+      - data/**
+      - README.md
+      - .github/workflows/**
   push:
     branches: [main]
     paths:
@@ -26,9 +28,11 @@ on:
       - .pre-commit-config.yaml
       - Makefile
       - Dockerfile
+      - .dockerignore
       - docker-compose.yml
-      - start.sh
-      - .github/workflows/ci.yml
+      - data/**
+      - README.md
+      - .github/workflows/**
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
