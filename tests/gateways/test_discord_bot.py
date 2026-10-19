@@ -164,3 +164,44 @@ def test_ask_does_not_record_no_response(monkeypatch, capsys):
     assert sent_messages == ["🙏"]
     entries = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
     assert entries[-1]["event"] == "no_response"
+
+
+def test_ask_falls_back_to_non_member_when_member_lookup_fails(monkeypatch, capsys):
+    sent_messages = []
+    captured_requests = []
+
+    async def find_member(*_args):
+        raise RuntimeError("member service unavailable")
+
+    async def handle_agent(request):
+        captured_requests.append(request)
+        return AgentResult(text="private answer", should_reply=True)
+
+    monkeypatch.setattr(
+        discord_bot,
+        "member_service",
+        SimpleNamespace(find_user_by_platform=find_member),
+    )
+    monkeypatch.setattr(
+        discord_bot,
+        "agent_service",
+        SimpleNamespace(handle=handle_agent),
+    )
+    monkeypatch.setattr(
+        discord_bot,
+        "chat_history_service",
+        SimpleNamespace(record=lambda **_kwargs: True),
+    )
+
+    asyncio.run(
+        discord_bot.ask.callback(
+            _interaction(sent_messages),
+            "private question",
+        )
+    )
+
+    assert sent_messages == ["private answer"]
+    assert captured_requests[0].user_role == ["非社員"]
+    events = [json.loads(line)["event"] for line in capsys.readouterr().err.splitlines()]
+    assert "member_lookup_failed" in events
+    assert "reply_sent" in events

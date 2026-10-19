@@ -153,6 +153,10 @@ class StreamableHttpMcpToolCaller:
 
 
 _JSON_FENCE = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)
+_EMPTY_DOCUMENTS = re.compile(
+    r"(?:Found\s+0\s+document|Total:\s*0\s+document)",
+    re.IGNORECASE,
+)
 
 
 def parse_payload_documents(text: str) -> list[dict[str, Any]]:
@@ -171,6 +175,6 @@ def parse_payload_documents(text: str) -> list[dict[str, Any]]:
 
     if documents:
         return documents
-    if re.search(r"Found\s+0\s+document", text, re.IGNORECASE):
+    if _EMPTY_DOCUMENTS.search(text):
         return []
     raise PayloadMcpSchemaError("MCP response did not contain Payload documents")

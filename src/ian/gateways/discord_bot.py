@@ -194,11 +194,24 @@ async def ask(interaction: discord.Interaction, prompt: str):
     correlation_id = _interaction_correlation_id(interaction)
     user = interaction.user
 
-    member = await member_service.find_user_by_platform("Discord", str(user.id))
+    await interaction.response.defer()
+
+    try:
+        member = await member_service.find_user_by_platform("Discord", str(user.id))
+    except Exception as error:
+        member = None
+        log_event(
+            "member_lookup_failed",
+            "discord_bot",
+            level="warning",
+            platform="Discord",
+            status="degraded",
+            correlation_id=correlation_id,
+            user_id=str(user.id),
+            error=error,
+        )
     db_role = member.member_role() if member else "非社員"
     roles = [db_role]
-
-    await interaction.response.defer()
 
     log_event(
         "request_received",
