@@ -34,9 +34,16 @@ from ian.infrastructure.payload_mcp.client import (
 )
 
 
-def test_parse_payload_documents_extracts_fenced_json_and_empty_results():
+@pytest.mark.parametrize(
+    "empty_result",
+    [
+        "Found 0 documents",
+        'Collection: "users"\nTotal: 0 documents\nPage: 1 of 1\n',
+    ],
+)
+def test_parse_payload_documents_extracts_fenced_json_and_empty_results(empty_result):
     assert parse_payload_documents('```json\n{"id": 1}\n```') == [{"id": 1}]
-    assert parse_payload_documents('Found 0 documents') == []
+    assert parse_payload_documents(empty_result) == []
 
 
 def test_parse_payload_documents_extracts_multiple_fenced_documents():
