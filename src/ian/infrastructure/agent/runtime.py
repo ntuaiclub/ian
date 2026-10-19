@@ -21,6 +21,7 @@
 import asyncio
 import threading
 import time
+import concurrent.futures
 from concurrent.futures import Future
 from datetime import datetime, timedelta, timezone
 from queue import Queue
@@ -104,27 +105,27 @@ mcp_config = {
 async def run_agentic_workflow():
     """Main event loop: dequeue requests and invoke the LangGraph agent."""
     client = MultiServerMCPClient(mcp_config)
-    google_api_key = GOOGLE_API_KEY
-    if not google_api_key:
-        log_event(
-            "job_failed",
-            "agent_runtime",
-            level="critical",
-            status="error",
-            job="agent_startup",
-            reason="missing_google_api_key",
-        )
-    primary_llm = ChatGoogleGenerativeAI(
-        model="gemini-3-flash-preview",
-        google_api_key=google_api_key,
-    )
-    fallback_llm = ChatGoogleGenerativeAI(
-        model="gemini-3.1-flash-lite-preview",
-        google_api_key=google_api_key,
-    )
-    llm = primary_llm.with_fallbacks([fallback_llm])
-    tools = await client.get_tools()
     try:
+        google_api_key = GOOGLE_API_KEY
+        if not google_api_key:
+            log_event(
+                "job_failed",
+                "agent_runtime",
+                level="critical",
+                status="error",
+                job="agent_startup",
+                reason="missing_google_api_key",
+            )
+        primary_llm = ChatGoogleGenerativeAI(
+            model="gemini-3-flash-preview",
+            google_api_key=google_api_key,
+        )
+        fallback_llm = ChatGoogleGenerativeAI(
+            model="gemini-3.1-flash-lite-preview",
+            google_api_key=google_api_key,
+        )
+        llm = primary_llm.with_fallbacks([fallback_llm])
+        tools = await client.get_tools()
         while True:
             (
                 session_id,
@@ -448,6 +449,31 @@ async def run_agentic_workflow():
             await client.aclose()
 
 
+def _mark_dispatcher_idle(workflow_future: Future) -> None:
+    """Allow start_dispatcher to schedule again after the worker exits."""
+    global dispatcher_started
+
+    error = None
+    try:
+        error = workflow_future.exception()
+    except concurrent.futures.CancelledError:
+        error = None
+
+    with dispatcher_lock:
+        dispatcher_started = False
+
+    if error is not None:
+        log_event(
+            "job_failed",
+            "agent_runtime",
+            level="error",
+            status="error",
+            job="agent_dispatcher",
+            error=error,
+            reason="workflow_exited",
+        )
+
+
 def start_dispatcher(user_name: str, current_time):
     """啟動事件循環線程（event-loop thread），首次呼叫時建立。"""
     global loop_agent, dispatcher_started
@@ -459,20 +485,30 @@ def start_dispatcher(user_name: str, current_time):
         if dispatcher_started:
             return loop_agent
         try:
-            loop = asyncio.new_event_loop()
-            loop_agent = loop
-            t = threading.Thread(target=lambda: loop.run_forever(), daemon=True)
-            t.start()
-            asyncio.run_coroutine_threadsafe(run_agentic_workflow(), loop)
+            if loop_agent is None:
+                loop = asyncio.new_event_loop()
+                loop_agent = loop
+                t = threading.Thread(target=lambda: loop.run_forever(), daemon=True)
+                t.start()
+            else:
+                loop = loop_agent
+
+            # Mark started before scheduling so a synchronous failure callback
+            # cannot race with a later True assignment.
+            dispatcher_started = True
+            workflow_future = asyncio.run_coroutine_threadsafe(
+                run_agentic_workflow(), loop
+            )
+            workflow_future.add_done_callback(_mark_dispatcher_idle)
             log_event(
                 "service_started",
                 "agent_runtime",
                 status="running",
                 service="agent_dispatcher",
             )
-            dispatcher_started = True
             return loop_agent
         except Exception as error:
+            dispatcher_started = False
             log_event(
                 "job_failed",
                 "agent_runtime",
