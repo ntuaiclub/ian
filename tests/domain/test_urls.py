@@ -42,3 +42,32 @@ def test_validate_urls_replaces_unapproved_response_urls():
     assert "https://linktr.ee/ntuai" in cleaned
     assert "https://fake.example/path" not in cleaned
     assert "(連結讀取錯誤，請重新索取)" in cleaned
+
+
+def test_validate_urls_rejects_uppercase_schemes():
+    cleaned = validate_urls_in_response(
+        "講義：HTTPS://unapproved.example/slides 與 Http://other.example/a",
+        tool_results=[],
+    )
+    assert "HTTPS://unapproved.example/slides" not in cleaned
+    assert "Http://other.example/a" not in cleaned
+    assert cleaned.count("(連結讀取錯誤，請重新索取)") == 2
+
+
+def test_validate_urls_allows_uppercase_scheme_when_approved():
+    cleaned = validate_urls_in_response(
+        "講義：HTTPS://docs.example/slides",
+        tool_results=["鏡像：https://docs.example/slides"],
+    )
+    assert cleaned == "講義：HTTPS://docs.example/slides"
+
+
+def test_validate_urls_does_not_corrupt_approved_nested_url():
+    approved = "https://cdn.example/render?src=https://images.example/pic.png"
+    response = f"圖片：{approved}\n其他：https://images.example/pic.png"
+
+    cleaned = validate_urls_in_response(response, tool_results=[approved])
+
+    assert approved in cleaned
+    assert cleaned.endswith("(連結讀取錯誤，請重新索取)")
+    assert "https://images.example/pic.png" not in cleaned.split("\n", 1)[1]
