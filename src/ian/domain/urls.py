@@ -38,15 +38,17 @@ def parse_no_response(text: str) -> tuple[bool, str | None]:
     return True, None
 
 
-def validate_urls_in_response(
+def validate_urls_in_response_with_count(
     response: str,
     tool_results: list[str],
     prompt_text: str = "",
-) -> str:
+) -> tuple[str, int]:
+    """Replace unapproved URLs and return ``(cleaned_response, rejected_count)``."""
     allowed_urls = extract_urls(prompt_text)
     for result in tool_results:
         allowed_urls.update(extract_urls(result))
 
+    rejected = 0
     for url in URL_PATTERN.findall(response):
         url_norm = url.rstrip("/")
         if not any(
@@ -55,5 +57,14 @@ def validate_urls_in_response(
             for allowed in allowed_urls
         ):
             response = response.replace(url, URL_PLACEHOLDER)
+            rejected += 1
 
-    return response
+    return response, rejected
+
+
+def validate_urls_in_response(
+    response: str,
+    tool_results: list[str],
+    prompt_text: str = "",
+) -> str:
+    return validate_urls_in_response_with_count(response, tool_results, prompt_text)[0]

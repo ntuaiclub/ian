@@ -42,3 +42,26 @@ def test_validate_urls_replaces_unapproved_response_urls():
     assert "https://linktr.ee/ntuai" in cleaned
     assert "https://fake.example/path" not in cleaned
     assert "(連結讀取錯誤，請重新索取)" in cleaned
+
+
+def test_validate_urls_with_count_reports_rejected_urls():
+    from ian.domain.urls import URL_PLACEHOLDER, validate_urls_in_response_with_count
+
+    cleaned, rejected = validate_urls_in_response_with_count(
+        "ok https://good.example/a bad https://fake.example/b",
+        tool_results=["https://good.example/a"],
+    )
+
+    assert rejected == 1
+    assert "https://fake.example/b" not in cleaned
+    assert URL_PLACEHOLDER in cleaned
+
+
+def test_validate_urls_with_count_ignores_placeholder_text_without_urls():
+    from ian.domain.urls import URL_PLACEHOLDER, validate_urls_in_response_with_count
+
+    text = f"{URL_PLACEHOLDER} 的意思是讀取失敗"
+    cleaned, rejected = validate_urls_in_response_with_count(text, tool_results=[])
+
+    assert rejected == 0
+    assert cleaned == text
